@@ -1,0 +1,32 @@
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch Luckfox rkmpi example (libs + headers + OpenCV)
+        run: git clone --depth 1 https://github.com/LuckfoxTECH/luckfox_pico_rkmpi_example "$HOME/rkmpi"
+
+      - name: Fetch cross toolchain only (sparse checkout)
+        run: |
+          git clone --depth 1 --filter=blob:none --sparse https://github.com/LuckfoxTECH/luckfox-pico "$HOME/luckfox-pico"
+          git -C "$HOME/luckfox-pico" sparse-checkout set tools/linux/toolchain/arm-rockchip830-linux-uclibcgnueabihf
+
+      - name: Build
+        run: |
+          TC="$HOME/luckfox-pico/tools/linux/toolchain/arm-rockchip830-linux-uclibcgnueabihf/bin"
+          cmake -S . -B build -DRKMPI_ROOT="$HOME/rkmpi" -DTOOLCHAIN_BIN="$TC"
+          cmake --build build -j"$(nproc)"
+          file build/luckfox_jpeg_server
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: luckfox_jpeg_server
+          path: build/luckfox_jpeg_server
