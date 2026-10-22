@@ -15,6 +15,10 @@
 #include <unistd.h>
 #include <time.h>
 #include <sys/stat.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <pthread.h>
+#include <stdint.h>
 #include <string>
 #include <vector>
 
@@ -47,12 +51,96 @@ struct Params {
     bool continuous = false;
     std::string dumpDir;
     int dumpEvery = 30;     // in continuous mode, save every Nth frame
+    int streamPort = 0;     // >0: serve a live MJPEG view on this port
     std::string imagePath;  // offline test: run detection on a file, no camera
 };
 
 static volatile bool g_run = true;
 
 static void onSignal(int) { g_run = false; }
+
+// ---- optional live view: MJPEG over HTTP (open http://<board-ip>:<port>/ in a browser) ----
+static pthread_mutex_t g_jpegLock = PTHREAD_MUTEX_INITIALIZER;
+static std::vector<uchar> g_jpeg;
+static volatile unsigned g_jpegSeq = 0;
+static volatile int g_clients = 0;
+
+static void* clientThread(void* arg) {
+    int fd = (int)(intptr_t)arg;
+    char req[512];
+    (void)recv(fd, req, sizeof(req), 0);  // ignore the request, every path serves the stream
+    const char* hdr = "HTTP/1.0 200 OK\r\nCache-Control: no-cache\r\n"
+                      "Content-Type: multipart/x-mixed-replace; boundary=frame\r\n\r\n";
+    bool ok = send(fd, hdr, strlen(hdr), MSG_NOSIGNAL) > 0;
+    unsigned last = 0;
+    __sync_fetch_and_add(&g_clients, 1);
+    while (ok && g_run) {
+        std::vector<uchar> copy;
+        pthread_mutex_lock(&g_jpegLock);
+        unsigned seq = g_jpegSeq;
+        if (seq != last) copy = g_jpeg;
+        pthread_mutex_unlock(&g_jpegLock);
+        if (seq == last || copy.empty()) { usleep(5000); continue; }
+        last = seq;
+        char part[128];
+        int n = snprintf(part, sizeof(part), "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %zu\r\n\r\n",
+                         copy.size());
+        ok = send(fd, part, n, MSG_NOSIGNAL) > 0 &&
+             send(fd, (const char*)&copy[0], copy.size(), MSG_NOSIGNAL) > 0 &&
+             send(fd, "\r\n", 2, MSG_NOSIGNAL) > 0;
+    }
+    __sync_fetch_and_sub(&g_clients, 1);
+    close(fd);
+    return NULL;
+}
+
+static void* serverThread(void* arg) {
+    int port = (int)(intptr_t)arg;
+    int s = socket(AF_INET, SOCK_STREAM, 0);
+    int one = 1;
+    setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    addr.sin_port = htons(port);
+    if (bind(s, (struct sockaddr*)&addr, sizeof(addr)) != 0 || listen(s, 4) != 0) {
+        fprintf(stderr, "live view: cannot listen on port %d\n", port);
+        return NULL;
+    }
+    printf("live view: http://<board-ip>:%d/\n", port);
+    while (g_run) {
+        int c = accept(s, NULL, NULL);
+        if (c < 0) continue;
+        pthread_t t;
+        if (pthread_create(&t, NULL, clientThread, (void*)(intptr_t)c) == 0) pthread_detach(t);
+        else close(c);
+    }
+    close(s);
+    return NULL;
+}
+
+static void publishFrame(const Params& p, const cv::Mat& gray, const std::vector<cv::Vec3f>& circles,
+                         int count) {
+    cv::Mat vis;
+    cv::cvtColor(gray, vis, cv::COLOR_GRAY2BGR);
+    double sx = (double)gray.cols / p.workW, sy = (double)gray.rows / p.workH;
+    for (size_t i = 0; i < circles.size(); ++i)
+        cv::circle(vis, cv::Point(cvRound(circles[i][0] * sx), cvRound(circles[i][1] * sy)),
+                   cvRound(circles[i][2] * sx), cv::Scalar(0, 255, 0), 2);
+    char txt[64];
+    snprintf(txt, sizeof(txt), "circles=%d  %s", count, count == p.targetCount ? "FRONT(1)" : "BACK(0)");
+    cv::putText(vis, txt, cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 0.9, cv::Scalar(0, 0, 255), 2);
+    std::vector<uchar> jpg;
+    std::vector<int> prm;
+    prm.push_back(cv::IMWRITE_JPEG_QUALITY);
+    prm.push_back(70);
+    cv::imencode(".jpg", vis, jpg, prm);
+    pthread_mutex_lock(&g_jpegLock);
+    g_jpeg.swap(jpg);
+    ++g_jpegSeq;
+    pthread_mutex_unlock(&g_jpegLock);
+}
 
 static double nowMs() {
     struct timespec t;
@@ -97,6 +185,7 @@ static bool parseArgs(int argc, char** argv, Params& p) {
         if (a == "--continuous") p.continuous = true;
         else if (a == "--dump")   { if (!(v = next("--dump"))) return false; p.dumpDir = v; }
         else if (a == "--dump-every") { if (!(v = next("--dump-every"))) return false; p.dumpEvery = atoi(v); }
+        else if (a == "--stream") { if (!(v = next("--stream"))) return false; p.streamPort = atoi(v); }
         else if (a == "--image")  { if (!(v = next("--image"))) return false; p.imagePath = v; }
         else if (a == "--rmin")   { if (!(v = next("--rmin"))) return false; p.minRadius = atoi(v); }
         else if (a == "--rmax")   { if (!(v = next("--rmax"))) return false; p.maxRadius = atoi(v); }
@@ -161,6 +250,10 @@ int main(int argc, char** argv) {
         SAMPLE_COMM_ISP_Stop(0);
         return 1;
     }
+    if (p.streamPort > 0) {
+        pthread_t st;
+        if (pthread_create(&st, NULL, serverThread, (void*)(intptr_t)p.streamPort) == 0) pthread_detach(st);
+    }
     printf("ready: %s mode, target=%d circles, radius %d-%d, p2=%.0f\n",
            p.continuous ? "continuous" : "PLC trigger", p.targetCount,
            p.minRadius, p.maxRadius, p.accum);
@@ -201,6 +294,7 @@ int main(int argc, char** argv) {
 
         printf("#%d circles=%d -> %s  (%.1f ms)\n", seq, count, front ? "FRONT(1)" : "BACK(0)", t1 - t0);
         if (!p.dumpDir.empty() && (!p.continuous || seq % p.dumpEvery == 0)) dumpFrame(p, gray, circles, count, seq);
+        if (g_clients > 0) publishFrame(p, gray, circles, count);
         RK_MPI_VI_ReleaseChnFrame(0, 0, &frame);
         ++seq;
 
