@@ -5,7 +5,7 @@
 //   IO_DONE    (out) : 1 = result is valid; cleared when the trigger drops
 //   IO_ERROR   (out) : 1 = camera or detection failure
 //
-// Usage:  luckfox_jpeg_server [--continuous] [--dump DIR] [--pins T,R,D,E]
+// Usage:  luckfox_jpeg_server [--continuous] [--dump DIR] [--pins T,R,D,E] [--work WxH] [--canny N]
 //                             [--rmin N] [--rmax N] [--p2 N] [--target N]
 
 #include <stdio.h>
@@ -97,6 +97,8 @@ static bool parseArgs(int argc, char** argv, Params& p) {
         else if (a == "--rmin")   { if (!(v = next("--rmin"))) return false; p.minRadius = atoi(v); }
         else if (a == "--rmax")   { if (!(v = next("--rmax"))) return false; p.maxRadius = atoi(v); }
         else if (a == "--p2")     { if (!(v = next("--p2"))) return false; p.accum = atof(v); }
+        else if (a == "--canny")  { if (!(v = next("--canny"))) return false; p.cannyHigh = atof(v); }
+        else if (a == "--work")   { if (!(v = next("--work"))) return false; if (sscanf(v, "%dx%d", &p.workW, &p.workH) != 2) return false; }
         else if (a == "--target") { if (!(v = next("--target"))) return false; p.targetCount = atoi(v); }
         else if (a == "--pins") {
             if (!(v = next("--pins"))) return false;
