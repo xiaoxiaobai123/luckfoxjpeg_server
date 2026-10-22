@@ -46,6 +46,7 @@ struct Params {
     double accum = 25;    // HoughCircles param2: lower = more circles
     bool continuous = false;
     std::string dumpDir;
+    std::string imagePath;  // offline test: run detection on a file, no camera
 };
 
 static volatile bool g_run = true;
@@ -94,6 +95,7 @@ static bool parseArgs(int argc, char** argv, Params& p) {
         const char* v = NULL;
         if (a == "--continuous") p.continuous = true;
         else if (a == "--dump")   { if (!(v = next("--dump"))) return false; p.dumpDir = v; }
+        else if (a == "--image")  { if (!(v = next("--image"))) return false; p.imagePath = v; }
         else if (a == "--rmin")   { if (!(v = next("--rmin"))) return false; p.minRadius = atoi(v); }
         else if (a == "--rmax")   { if (!(v = next("--rmax"))) return false; p.maxRadius = atoi(v); }
         else if (a == "--p2")     { if (!(v = next("--p2"))) return false; p.accum = atof(v); }
@@ -118,6 +120,20 @@ int main(int argc, char** argv) {
     Params p;
     if (!parseArgs(argc, argv, p)) return 1;
     if (!p.dumpDir.empty()) mkdir(p.dumpDir.c_str(), 0755);
+
+    if (!p.imagePath.empty()) {
+        cv::Mat img = cv::imread(p.imagePath, cv::IMREAD_GRAYSCALE);
+        if (img.empty()) { fprintf(stderr, "cannot read %s\n", p.imagePath.c_str()); return 1; }
+        std::vector<cv::Vec3f> circles;
+        int count = 0;
+        const int runs = 20;
+        double t0 = nowMs();
+        for (int i = 0; i < runs; ++i) count = countCircles(img, p, circles);
+        printf("%s: circles=%d -> %s  (%.1f ms/run)\n", p.imagePath.c_str(), count,
+               count == p.targetCount ? "FRONT(1)" : "BACK(0)", (nowMs() - t0) / runs);
+        dumpFrame(p, img, circles, count, 0);
+        return 0;
+    }
 
     signal(SIGINT, onSignal);
     signal(SIGTERM, onSignal);
@@ -158,7 +174,6 @@ int main(int argc, char** argv) {
         }
 
         VIDEO_FRAME_INFO_S frame;
-        double t0 = nowMs();
         // Drop one frame so the picture is exposed after the trigger, not before it.
         if (!p.continuous && RK_MPI_VI_GetChnFrame(0, 0, &frame, 200) == RK_SUCCESS)
             RK_MPI_VI_ReleaseChnFrame(0, 0, &frame);
@@ -173,6 +188,7 @@ int main(int argc, char** argv) {
         // The Y plane of NV12 is already a gray image; no color conversion needed.
         void* base = RK_MPI_MB_Handle2VirAddr(frame.stVFrame.pMbBlk);
         cv::Mat gray(CAP_HEIGHT, CAP_WIDTH, CV_8UC1, base, frame.stVFrame.u32VirWidth);
+        double t0 = nowMs();  // processing time only, excludes waiting for the frame
 
         std::vector<cv::Vec3f> circles;
         int count = countCircles(gray, p, circles);
