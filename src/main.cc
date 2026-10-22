@@ -59,6 +59,12 @@ static volatile bool g_run = true;
 
 static void onSignal(int) { g_run = false; }
 
+static double nowMs() {
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return t.tv_sec * 1000.0 + t.tv_nsec / 1e6;
+}
+
 // ---- optional live view: MJPEG over HTTP (open http://<board-ip>:<port>/ in a browser) ----
 static pthread_mutex_t g_jpegLock = PTHREAD_MUTEX_INITIALIZER;
 static std::vector<uchar> g_jpeg;
@@ -207,12 +213,6 @@ static void publishFrame(const Params& p, const cv::Mat& gray, const std::vector
     g_jpeg.swap(jpg);
     ++g_jpegSeq;
     pthread_mutex_unlock(&g_jpegLock);
-}
-
-static double nowMs() {
-    struct timespec t;
-    clock_gettime(CLOCK_MONOTONIC, &t);
-    return t.tv_sec * 1000.0 + t.tv_nsec / 1e6;
 }
 
 static int countCircles(const cv::Mat& gray, const Params& p, std::vector<cv::Vec3f>& circles) {
