@@ -120,8 +120,62 @@ static void* serverThread(void* arg) {
     return NULL;
 }
 
+// ---- system load, refreshed twice a second for the overlay ----
+struct SysStats {
+    double cpuPct = 0;    // whole system, 0-100 (the chip has one core)
+    double memUsedMb = 0, memTotalMb = 0;
+    double rssMb = 0;     // this process
+    double tempC = -1;
+};
+
+static void refreshSysStats(SysStats& s) {
+    static double lastMs = 0;
+    static unsigned long long lastBusy = 0, lastTotal = 0;
+    double now = nowMs();
+    if (now - lastMs < 500) return;
+    lastMs = now;
+
+    FILE* f = fopen("/proc/stat", "r");
+    if (f) {
+        unsigned long long u = 0, n = 0, sy = 0, id = 0, io = 0, irq = 0, sirq = 0, st = 0;
+        if (fscanf(f, "cpu %llu %llu %llu %llu %llu %llu %llu %llu", &u, &n, &sy, &id, &io, &irq, &sirq, &st) >= 4) {
+            unsigned long long total = u + n + sy + id + io + irq + sirq + st, busy = total - id - io;
+            if (lastTotal && total > lastTotal) s.cpuPct = 100.0 * (busy - lastBusy) / (total - lastTotal);
+            lastBusy = busy;
+            lastTotal = total;
+        }
+        fclose(f);
+    }
+    f = fopen("/proc/meminfo", "r");
+    if (f) {
+        char line[128];
+        double total = 0, avail = 0;
+        while (fgets(line, sizeof(line), f)) {
+            sscanf(line, "MemTotal: %lf kB", &total);
+            sscanf(line, "MemAvailable: %lf kB", &avail);
+        }
+        fclose(f);
+        s.memTotalMb = total / 1024;
+        s.memUsedMb = (total - avail) / 1024;
+    }
+    f = fopen("/proc/self/statm", "r");
+    if (f) {
+        unsigned long size = 0, rss = 0;
+        if (fscanf(f, "%lu %lu", &size, &rss) == 2) s.rssMb = rss * 4.0 / 1024;
+        fclose(f);
+    }
+    f = fopen("/sys/class/thermal/thermal_zone0/temp", "r");
+    if (f) {
+        int t = 0;
+        if (fscanf(f, "%d", &t) == 1) s.tempC = t / 1000.0;
+        fclose(f);
+    }
+}
+
 static void publishFrame(const Params& p, const cv::Mat& gray, const std::vector<cv::Vec3f>& circles,
-                         int count) {
+                         int count, double procMs, double fps) {
+    static SysStats sys;
+    refreshSysStats(sys);
     cv::Mat vis;
     cv::cvtColor(gray, vis, cv::COLOR_GRAY2BGR);
     double sx = (double)gray.cols / p.workW, sy = (double)gray.rows / p.workH;
@@ -131,6 +185,19 @@ static void publishFrame(const Params& p, const cv::Mat& gray, const std::vector
     char txt[64];
     snprintf(txt, sizeof(txt), "circles=%d  %s", count, count == p.targetCount ? "FRONT(1)" : "BACK(0)");
     cv::putText(vis, txt, cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 0.9, cv::Scalar(0, 0, 255), 2);
+    char info[3][96];
+    snprintf(info[0], sizeof(info[0]), "fps %.1f   detect %.1f ms", fps, procMs);
+    snprintf(info[1], sizeof(info[1]), "CPU %.0f%%   app mem %.1f MB", sys.cpuPct, sys.rssMb);
+    if (sys.tempC >= 0)
+        snprintf(info[2], sizeof(info[2]), "RAM %.0f/%.0f MB   %.0f C", sys.memUsedMb, sys.memTotalMb, sys.tempC);
+    else
+        snprintf(info[2], sizeof(info[2]), "RAM %.0f/%.0f MB", sys.memUsedMb, sys.memTotalMb);
+    for (int i = 0; i < 3; ++i) {
+        cv::putText(vis, info[i], cv::Point(10, 62 + i * 26), cv::FONT_HERSHEY_SIMPLEX, 0.62,
+                    cv::Scalar(0, 0, 0), 3);
+        cv::putText(vis, info[i], cv::Point(10, 62 + i * 26), cv::FONT_HERSHEY_SIMPLEX, 0.62,
+                    cv::Scalar(0, 255, 255), 1);
+    }
     std::vector<uchar> jpg;
     std::vector<int> prm;
     prm.push_back(cv::IMWRITE_JPEG_QUALITY);
@@ -294,7 +361,12 @@ int main(int argc, char** argv) {
 
         printf("#%d circles=%d -> %s  (%.1f ms)\n", seq, count, front ? "FRONT(1)" : "BACK(0)", t1 - t0);
         if (!p.dumpDir.empty() && (!p.continuous || seq % p.dumpEvery == 0)) dumpFrame(p, gray, circles, count, seq);
-        if (g_clients > 0) publishFrame(p, gray, circles, count);
+        // frame rate over the last second, shown in the live view
+        static int fpsFrames = 0;
+        static double fpsStart = nowMs(), fpsNow = 0;
+        ++fpsFrames;
+        if (nowMs() - fpsStart >= 1000) { fpsNow = fpsFrames * 1000.0 / (nowMs() - fpsStart); fpsFrames = 0; fpsStart = nowMs(); }
+        if (g_clients > 0) publishFrame(p, gray, circles, count, t1 - t0, fpsNow);
         RK_MPI_VI_ReleaseChnFrame(0, 0, &frame);
         ++seq;
 
