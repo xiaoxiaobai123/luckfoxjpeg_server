@@ -443,7 +443,8 @@ int main(int argc, char** argv) {
                 static int lastPrinted = -2;
                 static double lastPrintMs = 0;
                 if (result != lastPrinted || !g_p.continuous || nowMs() - lastPrintMs > 2000) {  // the log lives in RAM
-                    printf("circles=%d -> %s (%.1f ms)\n", count, result == 1 ? "OK" : "NG", detectMs);
+                    printf("circles=%d -> %s (%.1f ms) brightness=%.0f\n", count, result == 1 ? "OK" : "NG",
+                           detectMs, cv::mean(gray)[0]);
                     lastPrinted = result;
                     lastPrintMs = nowMs();
                 }
