@@ -106,6 +106,26 @@ static int countCircles(const cv::Mat& gray, const Settings& s, std::vector<cv::
     return (int)circles.size();
 }
 
+// Own ISP start-up (same steps as the Rockchip sample): the public sample library does not hand out
+// the AIQ context that exposure control needs.
+static bool ispStart(const char* iqDir) {
+    rk_aiq_static_info_t info;
+    memset(&info, 0, sizeof(info));
+    if (rk_aiq_uapi2_sysctl_enumStaticMetas(0, &info) != XCAM_RETURN_NO_ERROR) return false;
+    rk_aiq_uapi2_sysctl_preInit_devBufCnt(info.sensor_info.sensor_name, "rkraw_rx", 2);
+    g_aiq = rk_aiq_uapi2_sysctl_init(info.sensor_info.sensor_name, iqDir, NULL, NULL);
+    if (!g_aiq) return false;
+    if (rk_aiq_uapi2_sysctl_prepare(g_aiq, 0, 0, RK_AIQ_WORKING_MODE_NORMAL) != XCAM_RETURN_NO_ERROR) return false;
+    return rk_aiq_uapi2_sysctl_start(g_aiq) == XCAM_RETURN_NO_ERROR;
+}
+
+static void ispStop() {
+    if (!g_aiq) return;
+    rk_aiq_uapi2_sysctl_stop(g_aiq, false);
+    rk_aiq_uapi2_sysctl_deinit(g_aiq);
+    g_aiq = NULL;
+}
+
 static bool applyExposure(int x10) {
     if (!g_aiq) return false;
     Uapi_ExpSwAttrV2_t a{};
@@ -350,18 +370,15 @@ int main(int argc, char** argv) {
     else if (g_p.keyMode == "adc") keysOk = keysStartAdc(g_p.adcChannel);
     printf("keys: %s (%s)\n", g_p.keyMode.c_str(), keysOk ? "ready" : "none");
 
-    RK_S32 ret = SAMPLE_COMM_ISP_Init(0, RK_AIQ_WORKING_MODE_NORMAL, RK_FALSE, "/etc/iqfiles");
-    if (ret == RK_SUCCESS) ret = SAMPLE_COMM_ISP_Run(0);
-    if (ret != RK_SUCCESS) {
-        fprintf(stderr, "ISP init failed: %d\n", ret);
+    if (!ispStart("/etc/iqfiles")) {
+        fprintf(stderr, "ISP init failed\n");
         setOutputs(0, 0, 1);
         return 1;
     }
-    g_aiq = SAMPLE_COMM_ISP_GetAiqSysCtx(0);
     if (RK_MPI_SYS_Init() != RK_SUCCESS || vi_dev_init() != 0 || vi_chn_init(0, CAP_WIDTH, CAP_HEIGHT) != 0) {
         fprintf(stderr, "MPI/VI init failed\n");
         setOutputs(0, 0, 1);
-        SAMPLE_COMM_ISP_Stop(0);
+        ispStop();
         return 1;
     }
     applyExposure(settings.exposure);
@@ -460,6 +477,6 @@ int main(int argc, char** argv) {
     RK_MPI_VI_DisableChn(0, 0);
     RK_MPI_VI_DisableDev(0);
     RK_MPI_SYS_Exit();
-    SAMPLE_COMM_ISP_Stop(0);
+    ispStop();
     return 0;
 }
