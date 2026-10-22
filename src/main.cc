@@ -143,10 +143,12 @@ static bool applyExposure(int x10) {
         a.stManual.LinearAE.ManualIspDgainEn = false;
     }
     XCamReturn rs = rk_aiq_user_api2_ae_setExpSwAttr(g_aiq, a);
+    usleep(300000);  // async: let the AE thread take it before reading back
     Uapi_ExpSwAttrV2_t back{};
     XCamReturn rb = rk_aiq_user_api2_ae_getExpSwAttr(g_aiq, &back);
-    printf("exposure %d (0.1ms): get=%d set=%d readback: op=%d time_en=%d time=%.5f s\n", x10, (int)r, (int)rs, (int)rb,
-           (int)back.AecOpType, (int)back.stManual.LinearAE.ManualTimeEn, (double)back.stManual.LinearAE.TimeValue);
+    printf("exposure %d (0.1ms): get=%d set=%d readback=%d mode=%d (1=auto 2=manual) time_en=%d time=%.5f s\n", x10,
+           (int)r, (int)rs, (int)rb, (int)back.AecOpType, (int)back.stManual.LinearAE.ManualTimeEn,
+           (double)back.stManual.LinearAE.TimeValue);
     fflush(stdout);
     return rs == XCAM_RETURN_NO_ERROR;
 }
