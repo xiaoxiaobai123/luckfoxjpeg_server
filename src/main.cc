@@ -131,7 +131,7 @@ static bool applyExposure(int x10) {
     Uapi_ExpSwAttrV2_t a{};
     XCamReturn r = rk_aiq_user_api2_ae_getExpSwAttr(g_aiq, &a);
     if (r != XCAM_RETURN_NO_ERROR && r != XCAM_RETURN_BYPASS) a.Enable = true;
-    a.sync.sync_mode = RK_AIQ_UAPI_MODE_ASYNC;
+    a.sync.sync_mode = RK_AIQ_UAPI_MODE_SYNC;
     a.sync.done = false;
     if (x10 <= 0) {
         a.AecOpType = RK_AIQ_OP_MODE_AUTO;
@@ -142,7 +142,12 @@ static bool applyExposure(int x10) {
         a.stManual.LinearAE.ManualGainEn = false;
         a.stManual.LinearAE.ManualIspDgainEn = false;
     }
-    return rk_aiq_user_api2_ae_setExpSwAttr(g_aiq, a) == XCAM_RETURN_NO_ERROR;
+    XCamReturn rs = rk_aiq_user_api2_ae_setExpSwAttr(g_aiq, a);
+    Uapi_ExpSwAttrV2_t back{};
+    XCamReturn rb = rk_aiq_user_api2_ae_getExpSwAttr(g_aiq, &back);
+    printf("exposure %d (0.1ms): get=%d set=%d readback: op=%d time_en=%d time=%.5f s\n", x10, (int)r, (int)rs, (int)rb,
+           (int)back.AecOpType, (int)back.stManual.LinearAE.ManualTimeEn, (double)back.stManual.LinearAE.TimeValue);
+    return rs == XCAM_RETURN_NO_ERROR;
 }
 
 // ---------------------------------------------------------------------------------------------
