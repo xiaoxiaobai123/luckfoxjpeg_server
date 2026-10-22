@@ -212,7 +212,7 @@ static void publishCamView(const cv::Mat& gray, const std::vector<cv::Vec3f>& ci
     cv::putText(vis, t, cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 0.9, cv::Scalar(0, 0, 255), 2);
     char info[3][96];
     snprintf(info[0], sizeof(info[0]), "fps %.1f   detect %.1f ms", fps, ms);
-    snprintf(info[1], sizeof(info[1]), "CPU %.0f%%   app mem %.1f MB", sys.cpuPct, sys.rssMb);
+    snprintf(info[1], sizeof(info[1]), "CPU %.0f%%  mem %.1f MB  bright %.0f", sys.cpuPct, sys.rssMb, cv::mean(gray)[0]);
     snprintf(info[2], sizeof(info[2]), "RAM %.0f/%.0f MB   %.0f C", sys.memUsedMb, sys.memTotalMb, sys.tempC);
     for (int i = 0; i < 3; ++i) {
         cv::putText(vis, info[i], cv::Point(10, 62 + i * 26), cv::FONT_HERSHEY_SIMPLEX, 0.62, cv::Scalar(0, 0, 0), 3);
@@ -437,7 +437,13 @@ int main(int argc, char** argv) {
             if (measure || g_p.continuous) {
                 result = (count == s.target) ? 1 : 0;
                 setOutputs(result == 1, result == 0, 0);
-                printf("circles=%d -> %s (%.1f ms)\n", count, result == 1 ? "OK" : "NG", detectMs);
+                static int lastPrinted = -2;
+                static double lastPrintMs = 0;
+                if (result != lastPrinted || !g_p.continuous || nowMs() - lastPrintMs > 2000) {  // the log lives in RAM
+                    printf("circles=%d -> %s (%.1f ms)\n", count, result == 1 ? "OK" : "NG", detectMs);
+                    lastPrinted = result;
+                    lastPrintMs = nowMs();
+                }
             }
         }
 

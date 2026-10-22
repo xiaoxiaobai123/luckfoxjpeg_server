@@ -109,11 +109,11 @@ void Ui::render(cv::Mat& out, const Snapshot& snap) {
         if (snap.result == 1) { label = "OK"; col = cv::Scalar(60, 220, 60); }
         else if (snap.result == 0) { label = "NG"; col = cv::Scalar(60, 60, 240); }
         else if (snap.result == 2) { label = "ERR"; col = cv::Scalar(0, 140, 255); }
-        text(out, label, 10, 245, 2.2, col, 4);
-        snprintf(b, sizeof(b), "found %d / %d", snap.count, s.target);
-        text(out, b, 120, 205, 0.55, cv::Scalar(230, 230, 230));
-        snprintf(b, sizeof(b), "%.0f fps  %.1f ms", snap.fps, snap.detectMs);
-        text(out, b, 120, 228, 0.5, cv::Scalar(180, 180, 180));
+        text(out, label, 8, 250, 2.0, col, 4);
+        snprintf(b, sizeof(b), "found %d/%d", snap.count, s.target);
+        text(out, b, 104, 208, 0.5, cv::Scalar(230, 230, 230));
+        snprintf(b, sizeof(b), "%.0ffps %.1fms", snap.fps, snap.detectMs);
+        text(out, b, 104, 230, 0.45, cv::Scalar(180, 180, 180));
         text(out, "press OK for menu", 10, 276, 0.45, cv::Scalar(150, 150, 150));
         if (nowMs() < messageUntil_) {
             cv::rectangle(out, cv::Rect(0, 150, 240, 30), cv::Scalar(0, 0, 0), -1);
@@ -123,8 +123,8 @@ void Ui::render(cv::Mat& out, const Snapshot& snap) {
     }
 
     // menu: scrolling window of kRows lines under the live preview
-    cv::rectangle(out, cv::Rect(0, 0, 240, 22), cv::Scalar(0, 0, 0), -1);
-    text(out, fast_ ? "MENU  [x10]" : "MENU", 6, 16, 0.55, cv::Scalar(0, 255, 255));
+    cv::rectangle(out, cv::Rect(0, 0, 240, 24), cv::Scalar(0, 0, 0), -1);
+    text(out, fast_ ? "MENU  [x10]" : "MENU", 6, 18, 0.55, cv::Scalar(0, 255, 255));
     int first = sel_ - kRows / 2;
     if (first < 0) first = 0;
     if (first > kItems - kRows) first = kItems - kRows;
