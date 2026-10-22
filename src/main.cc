@@ -131,7 +131,7 @@ static bool applyExposure(int x10) {
     Uapi_ExpSwAttrV2_t a{};
     XCamReturn r = rk_aiq_user_api2_ae_getExpSwAttr(g_aiq, &a);
     if (r != XCAM_RETURN_NO_ERROR && r != XCAM_RETURN_BYPASS) a.Enable = true;
-    a.sync.sync_mode = RK_AIQ_UAPI_MODE_SYNC;
+    a.sync.sync_mode = RK_AIQ_UAPI_MODE_ASYNC;
     a.sync.done = false;
     if (x10 <= 0) {
         a.AecOpType = RK_AIQ_OP_MODE_AUTO;
@@ -147,6 +147,7 @@ static bool applyExposure(int x10) {
     XCamReturn rb = rk_aiq_user_api2_ae_getExpSwAttr(g_aiq, &back);
     printf("exposure %d (0.1ms): get=%d set=%d readback: op=%d time_en=%d time=%.5f s\n", x10, (int)r, (int)rs, (int)rb,
            (int)back.AecOpType, (int)back.stManual.LinearAE.ManualTimeEn, (double)back.stManual.LinearAE.TimeValue);
+    fflush(stdout);
     return rs == XCAM_RETURN_NO_ERROR;
 }
 
@@ -347,6 +348,7 @@ static Settings initialSettings() {
 // ---------------------------------------------------------------------------------------------
 
 int main(int argc, char** argv) {
+    setvbuf(stdout, NULL, _IOLBF, 0);
     if (!parseArgs(argc, argv, g_p)) return 1;
     Settings settings = initialSettings();
 
@@ -386,7 +388,7 @@ int main(int argc, char** argv) {
         ispStop();
         return 1;
     }
-    applyExposure(settings.exposure);
+    // exposure is applied from the capture loop once frames are flowing
 
     if (g_p.webPort > 0) webStart(g_p.webPort);
     pthread_t trigTid = 0, uiTid = 0;
@@ -394,8 +396,7 @@ int main(int argc, char** argv) {
     pthread_create(&uiTid, NULL, uiThread, NULL);
     printf("ready: %s mode\n", g_p.continuous ? "continuous" : "PLC trigger");
 
-    unsigned appliedVer = g_shared.version();
-    int appliedExposure = settings.exposure;
+    int appliedExposure = -1;  // forces the first apply after the first frame
     int trig = 0;  // 0 idle, 2 = next frame is the one to measure
     int count = 0, result = -1;
     double detectMs = 0, fps = 0, fpsStart = nowMs();
@@ -417,12 +418,9 @@ int main(int argc, char** argv) {
         cv::Mat gray(CAP_HEIGHT, CAP_WIDTH, CV_8UC1, base, frame.stVFrame.u32VirWidth);
 
         Settings s = g_shared.get();
-        if (g_shared.version() != appliedVer) {
-            appliedVer = g_shared.version();
-            if (s.exposure != appliedExposure) {
-                applyExposure(s.exposure);
-                appliedExposure = s.exposure;
-            }
+        if (s.exposure != appliedExposure) {
+            applyExposure(s.exposure);
+            appliedExposure = s.exposure;
         }
 
         // A trigger seen now may have arrived while this frame was exposing: skip it, measure the next.
