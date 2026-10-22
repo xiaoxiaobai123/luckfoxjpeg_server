@@ -1,12 +1,12 @@
-// Luckfox Pico Pro/Max: camera -> circle detection -> GPIO result.
+// Luckfox Pico (RV1106 / RV1103): camera -> circle detection -> PLC outputs, with a small LCD menu.
 //
-//   IO_TRIGGER (in)  : PLC rising edge = take a picture and judge
-//   IO_RESULT  (out) : 1 = exactly 5 circles found (front), 0 = otherwise (back)
-//   IO_DONE    (out) : 1 = result is valid; cleared when the trigger drops
-//   IO_ERROR   (out) : 1 = camera or detection failure
+//   PLC trigger (input, rising edge) -> take a picture -> count circles
+//   OK output = 1 when the count equals the target, NG output = 1 otherwise, ERR output = camera fault.
+//   The outputs are cleared on the trigger edge and stay latched until the next trigger.
+//   LCD + keys: OK opens the menu (circle count, diameter range, roundness, edge, exposure, save).
 //
-// Usage:  luckfox_jpeg_server [--continuous] [--dump DIR] [--pins T,R,D,E] [--work WxH] [--canny N]
-//                             [--rmin N] [--rmax N] [--p2 N] [--target N]
+// Bench use without wiring:  --web 8080  then open http://<board-ip>:8080/ (camera, LCD picture, keys)
+// Full option list: see printUsage().
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,47 +15,65 @@
 #include <unistd.h>
 #include <time.h>
 #include <sys/stat.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
 #include <pthread.h>
 #include <stdint.h>
 #include <string>
 #include <vector>
+#include <algorithm>
 
 extern "C" {
 #include "rk_mpi_sys.h"
 #include "rk_mpi_vi.h"
 #include "rk_aiq_user_api2_sysctl.h"
+#include "rk_aiq_user_api2_ae.h"
+#include "rk_aiq_types.h"
 }
 #include "luckfox_mpi.h"
 #include "gpio.h"
+#include "settings.h"
+#include "keys.h"
+#include "display.h"
+#include "ui.h"
+#include "web.h"
 #include <opencv2/core/core.hpp>
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
 
 #define CAP_WIDTH  640
 #define CAP_HEIGHT 480
+#define WORK_W 320
+#define WORK_H 240
 
 struct Params {
-    int pinTrigger = 52;  // pin 7, GPIO1_C4
-    int pinResult  = 55;  // pin 4, GPIO1_C7
-    int pinDone    = 54;  // pin 5, GPIO1_C6
-    int pinError   = 53;  // pin 6, GPIO1_C5
-    int targetCount = 5;
-    int workW = 320;      // detection runs on a downscaled gray image
-    int workH = 240;
-    int minRadius = 8;    // in work-image pixels, tune for the real part
-    int maxRadius = 60;
-    double cannyHigh = 100;
-    double accum = 25;    // HoughCircles param2: lower = more circles
+    // GPIO numbers = bank * 32 + group * 8 + index (A=0..D=3). Defaults match the wiring plan for
+    // both the Pico Max (RV1106) and the Pico Mini (RV1103).
+    int pinTrigger = 55, pinOk = 56, pinNg = 57, pinErr = 58;
+    int pinDc = 52, pinRst = 53, pinBl = 54;
+    int keyPins[6] = {64, 65, 66, 67, 70, 69};  // OK, UP, DOWN, LEFT, RIGHT, ADJ
+    std::string keyMode = "gpio";               // gpio | adc | none
+    int adcChannel = 0;
+    std::string spidev = "/dev/spidev0.0";
+    int spiHz = 40000000;
+    bool noScreen = false;
+    int webPort = 0;
     bool continuous = false;
-    std::string dumpDir;
-    int dumpEvery = 30;     // in continuous mode, save every Nth frame
-    int streamPort = 0;     // >0: serve a live MJPEG view on this port
-    std::string imagePath;  // offline test: run detection on a file, no camera
+    std::string conf = "/userdata/circle.conf";
+    std::string imagePath;
+    // command-line overrides of the saved settings (-1 = not given)
+    int oTarget = -1, oMinDia = -1, oMaxDia = -1, oRound = -1, oEdge = -1, oExposure = -1;
 };
 
+static Params g_p;
+static SharedSettings g_shared;
 static volatile bool g_run = true;
+static volatile bool g_menuOpen = false;
+static volatile int g_trigPending = 0;
+
+static Gpio g_ioTrigger, g_ioOk, g_ioNg, g_ioErr;
+
+static Snapshot g_snap;
+static pthread_mutex_t g_snapLock = PTHREAD_MUTEX_INITIALIZER;
+static rk_aiq_sys_ctx_t* g_aiq = NULL;
 
 static void onSignal(int) { g_run = false; }
 
@@ -65,73 +83,54 @@ static double nowMs() {
     return t.tv_sec * 1000.0 + t.tv_nsec / 1e6;
 }
 
-// ---- optional live view: MJPEG over HTTP (open http://<board-ip>:<port>/ in a browser) ----
-static pthread_mutex_t g_jpegLock = PTHREAD_MUTEX_INITIALIZER;
-static std::vector<uchar> g_jpeg;
-static volatile unsigned g_jpegSeq = 0;
-static volatile int g_clients = 0;
-
-static void* clientThread(void* arg) {
-    int fd = (int)(intptr_t)arg;
-    char req[512];
-    (void)recv(fd, req, sizeof(req), 0);  // ignore the request, every path serves the stream
-    const char* hdr = "HTTP/1.0 200 OK\r\nCache-Control: no-cache\r\n"
-                      "Content-Type: multipart/x-mixed-replace; boundary=frame\r\n\r\n";
-    bool ok = send(fd, hdr, strlen(hdr), MSG_NOSIGNAL) > 0;
-    unsigned last = 0;
-    __sync_fetch_and_add(&g_clients, 1);
-    while (ok && g_run) {
-        std::vector<uchar> copy;
-        pthread_mutex_lock(&g_jpegLock);
-        unsigned seq = g_jpegSeq;
-        if (seq != last) copy = g_jpeg;
-        pthread_mutex_unlock(&g_jpegLock);
-        if (seq == last || copy.empty()) { usleep(5000); continue; }
-        last = seq;
-        char part[128];
-        int n = snprintf(part, sizeof(part), "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %zu\r\n\r\n",
-                         copy.size());
-        ok = send(fd, part, n, MSG_NOSIGNAL) > 0 &&
-             send(fd, (const char*)&copy[0], copy.size(), MSG_NOSIGNAL) > 0 &&
-             send(fd, "\r\n", 2, MSG_NOSIGNAL) > 0;
-    }
-    __sync_fetch_and_sub(&g_clients, 1);
-    close(fd);
-    return NULL;
+static void setOutputs(int ok, int ng, int err) {
+    g_ioOk.write(ok);
+    g_ioNg.write(ng);
+    g_ioErr.write(err);
 }
 
-static void* serverThread(void* arg) {
-    int port = (int)(intptr_t)arg;
-    int s = socket(AF_INET, SOCK_STREAM, 0);
-    int one = 1;
-    setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = htonl(INADDR_ANY);
-    addr.sin_port = htons(port);
-    if (bind(s, (struct sockaddr*)&addr, sizeof(addr)) != 0 || listen(s, 4) != 0) {
-        fprintf(stderr, "live view: cannot listen on port %d\n", port);
-        return NULL;
-    }
-    printf("live view: http://<board-ip>:%d/\n", port);
-    while (g_run) {
-        int c = accept(s, NULL, NULL);
-        if (c < 0) continue;
-        pthread_t t;
-        if (pthread_create(&t, NULL, clientThread, (void*)(intptr_t)c) == 0) pthread_detach(t);
-        else close(c);
-    }
-    close(s);
-    return NULL;
+// ---------------------------------------------------------------------------------------------
+// detection
+// ---------------------------------------------------------------------------------------------
+
+static int countCircles(const cv::Mat& gray, const Settings& s, std::vector<cv::Vec3f>& circles) {
+    double k = (double)WORK_W / gray.cols;  // camera pixels -> work pixels
+    int minR = std::max(2, cvRound(s.minDia * 0.5 * k));
+    int maxR = std::max(minR + 1, cvRound(s.maxDia * 0.5 * k));
+    cv::Mat small;
+    cv::resize(gray, small, cv::Size(WORK_W, WORK_H), 0, 0, cv::INTER_AREA);
+    cv::GaussianBlur(small, small, cv::Size(5, 5), 1.5);
+    circles.clear();
+    cv::HoughCircles(small, circles, cv::HOUGH_GRADIENT, 1.0, std::max(8, cvRound(minR * 1.5)),
+                     s.edge, s.roundness, minR, maxR);
+    return (int)circles.size();
 }
 
-// ---- system load, refreshed twice a second for the overlay ----
+static bool applyExposure(int x10) {
+    if (!g_aiq) return false;
+    Uapi_ExpSwAttrV2_t a{};
+    XCamReturn r = rk_aiq_user_api2_ae_getExpSwAttr(g_aiq, &a);
+    if (r != XCAM_RETURN_NO_ERROR && r != XCAM_RETURN_BYPASS) a.Enable = true;
+    a.sync.sync_mode = RK_AIQ_UAPI_MODE_ASYNC;
+    a.sync.done = false;
+    if (x10 <= 0) {
+        a.AecOpType = RK_AIQ_OP_MODE_AUTO;
+    } else {
+        a.AecOpType = RK_AIQ_OP_MODE_MANUAL;
+        a.stManual.LinearAE.ManualTimeEn = true;
+        a.stManual.LinearAE.TimeValue = x10 / 10000.0f;  // seconds
+        a.stManual.LinearAE.ManualGainEn = false;
+        a.stManual.LinearAE.ManualIspDgainEn = false;
+    }
+    return rk_aiq_user_api2_ae_setExpSwAttr(g_aiq, a) == XCAM_RETURN_NO_ERROR;
+}
+
+// ---------------------------------------------------------------------------------------------
+// system load, shown on the bench camera view
+// ---------------------------------------------------------------------------------------------
+
 struct SysStats {
-    double cpuPct = 0;    // whole system, 0-100 (the chip has one core)
-    double memUsedMb = 0, memTotalMb = 0;
-    double rssMb = 0;     // this process
-    double tempC = -1;
+    double cpuPct = 0, memUsedMb = 0, memTotalMb = 0, rssMb = 0, tempC = -1;
 };
 
 static void refreshSysStats(SysStats& s) {
@@ -140,7 +139,6 @@ static void refreshSysStats(SysStats& s) {
     double now = nowMs();
     if (now - lastMs < 500) return;
     lastMs = now;
-
     FILE* f = fopen("/proc/stat", "r");
     if (f) {
         unsigned long long u = 0, n = 0, sy = 0, id = 0, io = 0, irq = 0, sirq = 0, st = 0;
@@ -178,212 +176,287 @@ static void refreshSysStats(SysStats& s) {
     }
 }
 
-static void publishFrame(const Params& p, const cv::Mat& gray, const std::vector<cv::Vec3f>& circles,
-                         int count, double procMs, double fps) {
+static void publishCamView(const cv::Mat& gray, const std::vector<cv::Vec3f>& circles, int count, int result,
+                           double fps, double ms) {
     static SysStats sys;
     refreshSysStats(sys);
     cv::Mat vis;
     cv::cvtColor(gray, vis, cv::COLOR_GRAY2BGR);
-    double sx = (double)gray.cols / p.workW, sy = (double)gray.rows / p.workH;
+    double k = (double)gray.cols / WORK_W;
     for (size_t i = 0; i < circles.size(); ++i)
-        cv::circle(vis, cv::Point(cvRound(circles[i][0] * sx), cvRound(circles[i][1] * sy)),
-                   cvRound(circles[i][2] * sx), cv::Scalar(0, 255, 0), 2);
-    char txt[64];
-    snprintf(txt, sizeof(txt), "circles=%d  %s", count, count == p.targetCount ? "FRONT(1)" : "BACK(0)");
-    cv::putText(vis, txt, cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 0.9, cv::Scalar(0, 0, 255), 2);
+        cv::circle(vis, cv::Point(cvRound(circles[i][0] * k), cvRound(circles[i][1] * k)),
+                   cvRound(circles[i][2] * k), cv::Scalar(0, 255, 0), 2);
+    char t[96];
+    const char* r = result == 1 ? "OK" : (result == 0 ? "NG" : (result == 2 ? "ERR" : "--"));
+    snprintf(t, sizeof(t), "circles=%d  %s", count, r);
+    cv::putText(vis, t, cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 0.9, cv::Scalar(0, 0, 255), 2);
     char info[3][96];
-    snprintf(info[0], sizeof(info[0]), "fps %.1f   detect %.1f ms", fps, procMs);
+    snprintf(info[0], sizeof(info[0]), "fps %.1f   detect %.1f ms", fps, ms);
     snprintf(info[1], sizeof(info[1]), "CPU %.0f%%   app mem %.1f MB", sys.cpuPct, sys.rssMb);
-    if (sys.tempC >= 0)
-        snprintf(info[2], sizeof(info[2]), "RAM %.0f/%.0f MB   %.0f C", sys.memUsedMb, sys.memTotalMb, sys.tempC);
-    else
-        snprintf(info[2], sizeof(info[2]), "RAM %.0f/%.0f MB", sys.memUsedMb, sys.memTotalMb);
+    snprintf(info[2], sizeof(info[2]), "RAM %.0f/%.0f MB   %.0f C", sys.memUsedMb, sys.memTotalMb, sys.tempC);
     for (int i = 0; i < 3; ++i) {
-        cv::putText(vis, info[i], cv::Point(10, 62 + i * 26), cv::FONT_HERSHEY_SIMPLEX, 0.62,
-                    cv::Scalar(0, 0, 0), 3);
-        cv::putText(vis, info[i], cv::Point(10, 62 + i * 26), cv::FONT_HERSHEY_SIMPLEX, 0.62,
-                    cv::Scalar(0, 255, 255), 1);
+        cv::putText(vis, info[i], cv::Point(10, 62 + i * 26), cv::FONT_HERSHEY_SIMPLEX, 0.62, cv::Scalar(0, 0, 0), 3);
+        cv::putText(vis, info[i], cv::Point(10, 62 + i * 26), cv::FONT_HERSHEY_SIMPLEX, 0.62, cv::Scalar(0, 255, 255), 1);
     }
-    std::vector<uchar> jpg;
-    std::vector<int> prm;
-    prm.push_back(cv::IMWRITE_JPEG_QUALITY);
-    prm.push_back(70);
-    cv::imencode(".jpg", vis, jpg, prm);
-    pthread_mutex_lock(&g_jpegLock);
-    g_jpeg.swap(jpg);
-    ++g_jpegSeq;
-    pthread_mutex_unlock(&g_jpegLock);
+    webPublishCam(vis);
 }
 
-static int countCircles(const cv::Mat& gray, const Params& p, std::vector<cv::Vec3f>& circles) {
-    cv::Mat small;
-    cv::resize(gray, small, cv::Size(p.workW, p.workH), 0, 0, cv::INTER_AREA);
-    cv::GaussianBlur(small, small, cv::Size(5, 5), 1.5);
-    circles.clear();
-    cv::HoughCircles(small, circles, cv::HOUGH_GRADIENT, 1.0, p.minRadius * 1.5,
-                     p.cannyHigh, p.accum, p.minRadius, p.maxRadius);
-    return (int)circles.size();
+// ---------------------------------------------------------------------------------------------
+// threads
+// ---------------------------------------------------------------------------------------------
+
+// Waits for the PLC trigger edge. The outputs are cleared right here so the PLC sees "busy"
+// immediately, not after the next camera frame.
+static void* triggerThread(void*) {
+    while (g_run) {
+        if (g_ioTrigger.waitEdge(100) && !g_menuOpen) {
+            setOutputs(0, 0, 0);
+            g_trigPending = 1;
+        }
+    }
+    return NULL;
 }
 
-static void dumpFrame(const Params& p, const cv::Mat& gray, const std::vector<cv::Vec3f>& circles,
-                      int count, int seq) {
-    if (p.dumpDir.empty()) return;
-    cv::Mat vis;
-    cv::resize(gray, vis, cv::Size(p.workW, p.workH), 0, 0, cv::INTER_AREA);
-    cv::cvtColor(vis, vis, cv::COLOR_GRAY2BGR);
-    for (size_t i = 0; i < circles.size(); ++i)
-        cv::circle(vis, cv::Point(cvRound(circles[i][0]), cvRound(circles[i][1])),
-                   cvRound(circles[i][2]), cv::Scalar(0, 255, 0), 2);
-    char path[256];
-    snprintf(path, sizeof(path), "%s/frame_%04d_n%d.jpg", p.dumpDir.c_str(), seq, count);
-    cv::imwrite(path, vis);
-    snprintf(path, sizeof(path), "%s/raw_%04d.jpg", p.dumpDir.c_str(), seq);
-    cv::imwrite(path, gray);
+// Draws the LCD picture, handles the keys and publishes the same picture to the bench page.
+static void* uiThread(void*) {
+    Ui ui(g_shared, g_p.conf);
+    Display disp;
+    bool haveLcd = false;
+    if (!g_p.noScreen) {
+        haveLcd = disp.open(g_p.spidev.c_str(), g_p.pinDc, g_p.pinRst, g_p.pinBl, g_p.spiHz);
+        printf("lcd: %s\n", haveLcd ? "ready" : "not available (no spidev? bench page still works)");
+    }
+    cv::Mat frame;
+    while (g_run) {
+        double t0 = nowMs();
+        Key k;
+        while (keysPop(k)) ui.onKey(k);
+        g_menuOpen = ui.menuOpen();
+        Snapshot snap;
+        pthread_mutex_lock(&g_snapLock);
+        snap = g_snap;
+        pthread_mutex_unlock(&g_snapLock);
+        ui.render(frame, snap);
+        if (haveLcd) disp.show(frame);
+        if (webWantsUi()) webPublishUi(frame);
+        double spent = nowMs() - t0;
+        if (spent < 33) usleep((useconds_t)((33 - spent) * 1000));
+    }
+    if (haveLcd) disp.backlight(false);
+    return NULL;
+}
+
+// ---------------------------------------------------------------------------------------------
+// command line
+// ---------------------------------------------------------------------------------------------
+
+static void printUsage() {
+    printf("usage: luckfox_jpeg_server [options]\n"
+           "  --continuous            detect on every frame, ignore the PLC trigger (bench use)\n"
+           "  --web PORT              bench page: camera, LCD picture and keys in a browser\n"
+           "  --image FILE            run the detector on a picture and exit (no camera)\n"
+           "  --pins T,OK,NG,ERR      trigger input and result outputs (GPIO numbers)\n"
+           "  --lcd DC,RST,BL         LCD control pins            --spi DEV   (default /dev/spidev0.0)\n"
+           "  --keys gpio|adc|none    key source                  --keypins OK,UP,DOWN,LEFT,RIGHT,ADJ\n"
+           "  --adc N                 SARADC channel for the resistor-ladder keys\n"
+           "  --no-screen             do not open the LCD\n"
+           "  --conf FILE             saved settings (default /userdata/circle.conf)\n"
+           "  --target N --dmin N --dmax N --round N --edge N --exposure N   override saved settings\n");
 }
 
 static bool parseArgs(int argc, char** argv, Params& p) {
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
-        auto next = [&](const char* name) -> const char* {
-            if (i + 1 >= argc) { fprintf(stderr, "missing value for %s\n", name); return NULL; }
-            return argv[++i];
-        };
         const char* v = NULL;
+        bool needs = (a != "--continuous" && a != "--no-screen" && a != "--help");
+        if (needs) {
+            if (i + 1 >= argc) { fprintf(stderr, "missing value for %s\n", a.c_str()); return false; }
+            v = argv[++i];
+        }
         if (a == "--continuous") p.continuous = true;
-        else if (a == "--dump")   { if (!(v = next("--dump"))) return false; p.dumpDir = v; }
-        else if (a == "--dump-every") { if (!(v = next("--dump-every"))) return false; p.dumpEvery = atoi(v); }
-        else if (a == "--stream") { if (!(v = next("--stream"))) return false; p.streamPort = atoi(v); }
-        else if (a == "--image")  { if (!(v = next("--image"))) return false; p.imagePath = v; }
-        else if (a == "--rmin")   { if (!(v = next("--rmin"))) return false; p.minRadius = atoi(v); }
-        else if (a == "--rmax")   { if (!(v = next("--rmax"))) return false; p.maxRadius = atoi(v); }
-        else if (a == "--p2")     { if (!(v = next("--p2"))) return false; p.accum = atof(v); }
-        else if (a == "--canny")  { if (!(v = next("--canny"))) return false; p.cannyHigh = atof(v); }
-        else if (a == "--work")   { if (!(v = next("--work"))) return false; if (sscanf(v, "%dx%d", &p.workW, &p.workH) != 2) return false; }
-        else if (a == "--target") { if (!(v = next("--target"))) return false; p.targetCount = atoi(v); }
+        else if (a == "--no-screen") p.noScreen = true;
+        else if (a == "--help") { printUsage(); exit(0); }
+        else if (a == "--web" || a == "--stream") p.webPort = atoi(v);
+        else if (a == "--image") p.imagePath = v;
+        else if (a == "--conf") p.conf = v;
+        else if (a == "--spi") p.spidev = v;
+        else if (a == "--keys") p.keyMode = v;
+        else if (a == "--adc") p.adcChannel = atoi(v);
+        else if (a == "--target") p.oTarget = atoi(v);
+        else if (a == "--dmin") p.oMinDia = atoi(v);
+        else if (a == "--dmax") p.oMaxDia = atoi(v);
+        else if (a == "--round") p.oRound = atoi(v);
+        else if (a == "--edge") p.oEdge = atoi(v);
+        else if (a == "--exposure") p.oExposure = atoi(v);
         else if (a == "--pins") {
-            if (!(v = next("--pins"))) return false;
-            if (sscanf(v, "%d,%d,%d,%d", &p.pinTrigger, &p.pinResult, &p.pinDone, &p.pinError) != 4) {
-                fprintf(stderr, "--pins expects trigger,result,done,error\n");
-                return false;
-            }
+            if (sscanf(v, "%d,%d,%d,%d", &p.pinTrigger, &p.pinOk, &p.pinNg, &p.pinErr) != 4) return false;
+        } else if (a == "--lcd") {
+            if (sscanf(v, "%d,%d,%d", &p.pinDc, &p.pinRst, &p.pinBl) != 3) return false;
+        } else if (a == "--keypins") {
+            if (sscanf(v, "%d,%d,%d,%d,%d,%d", &p.keyPins[0], &p.keyPins[1], &p.keyPins[2], &p.keyPins[3],
+                       &p.keyPins[4], &p.keyPins[5]) != 6) return false;
         } else {
             fprintf(stderr, "unknown argument: %s\n", a.c_str());
+            printUsage();
             return false;
         }
     }
     return true;
 }
 
-int main(int argc, char** argv) {
-    Params p;
-    if (!parseArgs(argc, argv, p)) return 1;
-    if (!p.dumpDir.empty()) mkdir(p.dumpDir.c_str(), 0755);
+static Settings initialSettings() {
+    Settings s;
+    s.load(g_p.conf.c_str());  // missing file is fine: defaults
+    if (g_p.oTarget >= 0) s.target = g_p.oTarget;
+    if (g_p.oMinDia >= 0) s.minDia = g_p.oMinDia;
+    if (g_p.oMaxDia >= 0) s.maxDia = g_p.oMaxDia;
+    if (g_p.oRound >= 0) s.roundness = g_p.oRound;
+    if (g_p.oEdge >= 0) s.edge = g_p.oEdge;
+    if (g_p.oExposure >= 0) s.exposure = g_p.oExposure;
+    s.clamp();
+    return s;
+}
 
-    if (!p.imagePath.empty()) {
-        cv::Mat img = cv::imread(p.imagePath, cv::IMREAD_GRAYSCALE);
-        if (img.empty()) { fprintf(stderr, "cannot read %s\n", p.imagePath.c_str()); return 1; }
+// ---------------------------------------------------------------------------------------------
+// main
+// ---------------------------------------------------------------------------------------------
+
+int main(int argc, char** argv) {
+    if (!parseArgs(argc, argv, g_p)) return 1;
+    Settings settings = initialSettings();
+
+    if (!g_p.imagePath.empty()) {  // offline check of the detector
+        cv::Mat img = cv::imread(g_p.imagePath, cv::IMREAD_GRAYSCALE);
+        if (img.empty()) { fprintf(stderr, "cannot read %s\n", g_p.imagePath.c_str()); return 1; }
         std::vector<cv::Vec3f> circles;
         int count = 0;
-        const int runs = 20;
         double t0 = nowMs();
-        for (int i = 0; i < runs; ++i) count = countCircles(img, p, circles);
-        printf("%s: circles=%d -> %s  (%.1f ms/run)\n", p.imagePath.c_str(), count,
-               count == p.targetCount ? "FRONT(1)" : "BACK(0)", (nowMs() - t0) / runs);
-        dumpFrame(p, img, circles, count, 0);
+        for (int i = 0; i < 20; ++i) count = countCircles(img, settings, circles);
+        printf("%s: circles=%d -> %s  (%.1f ms/run)\n", g_p.imagePath.c_str(), count,
+               count == settings.target ? "OK" : "NG", (nowMs() - t0) / 20);
         return 0;
     }
 
     signal(SIGINT, onSignal);
     signal(SIGTERM, onSignal);
+    g_shared.set(settings);
 
-    Gpio ioTrigger, ioResult, ioDone, ioError;
-    bool ioOk = ioResult.openOut(p.pinResult, 0) && ioDone.openOut(p.pinDone, 0) &&
-                ioError.openOut(p.pinError, 0);
-    if (!p.continuous) ioOk = ioOk && ioTrigger.openIn(p.pinTrigger, "rising");
+    bool ioOk = g_ioOk.openOut(g_p.pinOk, 0) && g_ioNg.openOut(g_p.pinNg, 0) && g_ioErr.openOut(g_p.pinErr, 0);
+    if (!g_p.continuous) ioOk = ioOk && g_ioTrigger.openIn(g_p.pinTrigger, "rising");
     if (!ioOk) fprintf(stderr, "WARNING: GPIO setup failed (check pin numbers)\n");
 
-    const RK_CHAR* iqDir = "/etc/iqfiles";
-    RK_S32 ret = SAMPLE_COMM_ISP_Init(0, RK_AIQ_WORKING_MODE_NORMAL, RK_FALSE, iqDir);
+    bool keysOk = false;
+    if (g_p.keyMode == "gpio") keysOk = keysStartGpio(g_p.keyPins);
+    else if (g_p.keyMode == "adc") keysOk = keysStartAdc(g_p.adcChannel);
+    printf("keys: %s (%s)\n", g_p.keyMode.c_str(), keysOk ? "ready" : "none");
+
+    RK_S32 ret = SAMPLE_COMM_ISP_Init(0, RK_AIQ_WORKING_MODE_NORMAL, RK_FALSE, "/etc/iqfiles");
     if (ret == RK_SUCCESS) ret = SAMPLE_COMM_ISP_Run(0);
     if (ret != RK_SUCCESS) {
         fprintf(stderr, "ISP init failed: %d\n", ret);
-        ioError.write(1);
+        setOutputs(0, 0, 1);
         return 1;
     }
-    if (RK_MPI_SYS_Init() != RK_SUCCESS || vi_dev_init() != 0 ||
-        vi_chn_init(0, CAP_WIDTH, CAP_HEIGHT) != 0) {
+    g_aiq = SAMPLE_COMM_ISP_GetAiqSysCtx(0);
+    if (RK_MPI_SYS_Init() != RK_SUCCESS || vi_dev_init() != 0 || vi_chn_init(0, CAP_WIDTH, CAP_HEIGHT) != 0) {
         fprintf(stderr, "MPI/VI init failed\n");
-        ioError.write(1);
+        setOutputs(0, 0, 1);
         SAMPLE_COMM_ISP_Stop(0);
         return 1;
     }
-    if (p.streamPort > 0) {
-        pthread_t st;
-        if (pthread_create(&st, NULL, serverThread, (void*)(intptr_t)p.streamPort) == 0) pthread_detach(st);
-    }
-    printf("ready: %s mode, target=%d circles, radius %d-%d, p2=%.0f\n",
-           p.continuous ? "continuous" : "PLC trigger", p.targetCount,
-           p.minRadius, p.maxRadius, p.accum);
+    applyExposure(settings.exposure);
 
-    int seq = 0;
-    double statStart = nowMs();
-    int statFrames = 0;
+    if (g_p.webPort > 0) webStart(g_p.webPort);
+    pthread_t trigTid = 0, uiTid = 0;
+    if (!g_p.continuous) pthread_create(&trigTid, NULL, triggerThread, NULL);
+    pthread_create(&uiTid, NULL, uiThread, NULL);
+    printf("ready: %s mode\n", g_p.continuous ? "continuous" : "PLC trigger");
+
+    unsigned appliedVer = g_shared.version();
+    int appliedExposure = settings.exposure;
+    int trig = 0;  // 0 idle, 2 = next frame is the one to measure
+    int count = 0, result = -1;
+    double detectMs = 0, fps = 0, fpsStart = nowMs();
+    int fpsFrames = 0;
+    std::vector<cv::Vec3f> circles;
+
     while (g_run) {
-        if (!p.continuous) {
-            if (!ioTrigger.waitEdge(200)) continue;
-            ioDone.write(0);
-            ioError.write(0);
-        }
-
         VIDEO_FRAME_INFO_S frame;
-        // Drop one frame so the picture is exposed after the trigger, not before it.
-        if (!p.continuous && RK_MPI_VI_GetChnFrame(0, 0, &frame, 200) == RK_SUCCESS)
-            RK_MPI_VI_ReleaseChnFrame(0, 0, &frame);
         if (RK_MPI_VI_GetChnFrame(0, 0, &frame, 500) != RK_SUCCESS) {
-            fprintf(stderr, "get frame failed\n");
-            ioError.write(1);
-            ioDone.write(1);
-            if (!p.continuous) { while (g_run && ioTrigger.read() == 1) usleep(1000); ioDone.write(0); }
+            if (trig == 2 || g_trigPending) {
+                result = 2;
+                setOutputs(0, 0, 1);
+                trig = 0;
+                g_trigPending = 0;
+            }
             continue;
         }
-
-        // The Y plane of NV12 is already a gray image; no color conversion needed.
         void* base = RK_MPI_MB_Handle2VirAddr(frame.stVFrame.pMbBlk);
         cv::Mat gray(CAP_HEIGHT, CAP_WIDTH, CV_8UC1, base, frame.stVFrame.u32VirWidth);
-        double t0 = nowMs();  // processing time only, excludes waiting for the frame
 
-        std::vector<cv::Vec3f> circles;
-        int count = countCircles(gray, p, circles);
-        int front = (count == p.targetCount) ? 1 : 0;
-        ioResult.write(front);
-        ioDone.write(1);
-        double t1 = nowMs();
-
-        printf("#%d circles=%d -> %s  (%.1f ms)\n", seq, count, front ? "FRONT(1)" : "BACK(0)", t1 - t0);
-        if (!p.dumpDir.empty() && (!p.continuous || seq % p.dumpEvery == 0)) dumpFrame(p, gray, circles, count, seq);
-        // frame rate over the last second, shown in the live view
-        static int fpsFrames = 0;
-        static double fpsStart = nowMs(), fpsNow = 0;
-        ++fpsFrames;
-        if (nowMs() - fpsStart >= 1000) { fpsNow = fpsFrames * 1000.0 / (nowMs() - fpsStart); fpsFrames = 0; fpsStart = nowMs(); }
-        if (g_clients > 0) publishFrame(p, gray, circles, count, t1 - t0, fpsNow);
-        RK_MPI_VI_ReleaseChnFrame(0, 0, &frame);
-        ++seq;
-
-        if (p.continuous) {
-            if (++statFrames == 30) {
-                printf("avg %.1f fps\n", statFrames * 1000.0 / (nowMs() - statStart));
-                statFrames = 0;
-                statStart = nowMs();
+        Settings s = g_shared.get();
+        if (g_shared.version() != appliedVer) {
+            appliedVer = g_shared.version();
+            if (s.exposure != appliedExposure) {
+                applyExposure(s.exposure);
+                appliedExposure = s.exposure;
             }
-        } else {
-            // Keep DONE high until the PLC drops the trigger, then reset for the next cycle.
-            while (g_run && ioTrigger.read() == 1) usleep(1000);
-            ioDone.write(0);
         }
+
+        // A trigger seen now may have arrived while this frame was exposing: skip it, measure the next.
+        bool measure = false;
+        if (g_trigPending) {
+            g_trigPending = 0;
+            trig = 2;
+        } else if (trig == 2) {
+            measure = true;
+            trig = 0;
+        }
+
+        if (measure || g_menuOpen || g_p.continuous) {
+            double t0 = nowMs();
+            count = countCircles(gray, s, circles);
+            detectMs = nowMs() - t0;
+            if (measure || g_p.continuous) {
+                result = (count == s.target) ? 1 : 0;
+                setOutputs(result == 1, result == 0, 0);
+                printf("circles=%d -> %s (%.1f ms)\n", count, result == 1 ? "OK" : "NG", detectMs);
+            }
+        }
+
+        ++fpsFrames;
+        if (nowMs() - fpsStart >= 1000) {
+            fps = fpsFrames * 1000.0 / (nowMs() - fpsStart);
+            fpsFrames = 0;
+            fpsStart = nowMs();
+        }
+
+        // picture for the LCD thread
+        Snapshot snap;
+        cv::Mat small;
+        cv::resize(gray, small, cv::Size(240, 180), 0, 0, cv::INTER_AREA);
+        cv::cvtColor(small, snap.preview, cv::COLOR_GRAY2BGR);
+        double ks = 240.0 / WORK_W;
+        for (size_t i = 0; i < circles.size(); ++i)
+            snap.circles.push_back(cv::Vec3f(circles[i][0] * ks, circles[i][1] * ks, circles[i][2] * ks));
+        snap.count = count;
+        snap.result = result;
+        snap.fps = fps;
+        snap.detectMs = detectMs;
+        pthread_mutex_lock(&g_snapLock);
+        g_snap = snap;
+        pthread_mutex_unlock(&g_snapLock);
+
+        if (webWantsCam()) publishCamView(gray, circles, count, result, fps, detectMs);
+        RK_MPI_VI_ReleaseChnFrame(0, 0, &frame);
     }
 
-    ioDone.write(0);
+    g_run = false;
+    if (trigTid) pthread_join(trigTid, NULL);
+    if (uiTid) pthread_join(uiTid, NULL);
+    keysStop();
+    webStop();
+    setOutputs(0, 0, 0);
     RK_MPI_VI_DisableChn(0, 0);
     RK_MPI_VI_DisableDev(0);
     RK_MPI_SYS_Exit();

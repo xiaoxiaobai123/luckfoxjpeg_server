@@ -1,0 +1,161 @@
+#include "keys.h"
+#include "gpio.h"
+
+#include <pthread.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+#include <unistd.h>
+#include <deque>
+
+static pthread_mutex_t g_qLock = PTHREAD_MUTEX_INITIALIZER;
+static std::deque<Key> g_queue;
+static volatile bool g_scan = false;
+static pthread_t g_thread;
+static bool g_threadStarted = false;
+
+void keysPush(Key k) {
+    pthread_mutex_lock(&g_qLock);
+    if (g_queue.size() < 16) g_queue.push_back(k);
+    pthread_mutex_unlock(&g_qLock);
+}
+
+bool keysPop(Key& k) {
+    pthread_mutex_lock(&g_qLock);
+    bool have = !g_queue.empty();
+    if (have) {
+        k = g_queue.front();
+        g_queue.pop_front();
+    }
+    pthread_mutex_unlock(&g_qLock);
+    return have;
+}
+
+bool keysPushByName(const std::string& n) {
+    Key k = K_NONE;
+    if (n == "ok") k = K_OK;
+    else if (n == "up") k = K_UP;
+    else if (n == "down") k = K_DOWN;
+    else if (n == "left") k = K_LEFT;
+    else if (n == "right") k = K_RIGHT;
+    else if (n == "adj") k = K_ADJ;
+    if (k == K_NONE) return false;
+    keysPush(k);
+    return true;
+}
+
+// ---- scanning thread ----
+
+static Gpio g_gpioKeys[6];
+static bool g_gpioFit[6];
+static int g_adcFd = -1;
+static bool g_useAdc = false;
+
+static const Key kOrder[6] = {K_OK, K_UP, K_DOWN, K_LEFT, K_RIGHT, K_ADJ};
+
+// Resistor ladder: 10k pull-up to 1.8V, key resistors 1k/3.3k/6.8k/15k/33k/68k to ground.
+// Expected 10-bit counts: 93, 254, 413, 613, 785, 892; idle 1023. Thresholds are the midpoints.
+static Key classifyAdc(int raw) {
+    if (raw < 170) return K_OK;
+    if (raw < 333) return K_UP;
+    if (raw < 513) return K_DOWN;
+    if (raw < 699) return K_LEFT;
+    if (raw < 838) return K_RIGHT;
+    if (raw < 957) return K_ADJ;
+    return K_NONE;
+}
+
+static Key readRaw() {
+    if (g_useAdc) {
+        char buf[16] = {0};
+        if (g_adcFd < 0) return K_NONE;
+        ssize_t n = pread(g_adcFd, buf, sizeof(buf) - 1, 0);
+        if (n <= 0) return K_NONE;
+        return classifyAdc(atoi(buf));
+    }
+    for (int i = 0; i < 6; ++i)
+        if (g_gpioFit[i] && g_gpioKeys[i].read() == 1) return kOrder[i];
+    return K_NONE;
+}
+
+static long long nowMs() {
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return (long long)t.tv_sec * 1000 + t.tv_nsec / 1000000;
+}
+
+static void* scanThread(void*) {
+    Key stable = K_NONE, candidate = K_NONE;
+    int same = 0;
+    long long pressedAt = 0, lastRepeat = 0;
+    while (g_scan) {
+        Key raw = readRaw();
+        if (raw == candidate) {
+            if (same < 100) ++same;
+        } else {
+            candidate = raw;
+            same = 1;
+        }
+        if (same >= 4 && candidate != stable) {  // ~20 ms of the same reading = debounced
+            stable = candidate;
+            if (stable != K_NONE) {
+                keysPush(stable);
+                pressedAt = lastRepeat = nowMs();
+            }
+        }
+        // hold an arrow key to repeat
+        if (stable == K_UP || stable == K_DOWN || stable == K_LEFT || stable == K_RIGHT) {
+            long long t = nowMs();
+            if (t - pressedAt > 450 && t - lastRepeat > 90) {
+                keysPush(stable);
+                lastRepeat = t;
+            }
+        }
+        usleep(5000);
+    }
+    return NULL;
+}
+
+static bool startThread() {
+    g_scan = true;
+    if (pthread_create(&g_thread, NULL, scanThread, NULL) != 0) {
+        g_scan = false;
+        return false;
+    }
+    g_threadStarted = true;
+    return true;
+}
+
+bool keysStartGpio(const int pins[6]) {
+    g_useAdc = false;
+    bool any = false;
+    for (int i = 0; i < 6; ++i) {
+        g_gpioFit[i] = false;
+        if (pins[i] < 0) continue;
+        if (g_gpioKeys[i].openIn(pins[i], "none")) {
+            g_gpioFit[i] = true;
+            any = true;
+        }
+    }
+    return any && startThread();
+}
+
+bool keysStartAdc(int channel) {
+    g_useAdc = true;
+    char path[96];
+    snprintf(path, sizeof(path), "/sys/bus/iio/devices/iio:device0/in_voltage%d_raw", channel);
+    g_adcFd = open(path, O_RDONLY);
+    if (g_adcFd < 0) return false;
+    return startThread();
+}
+
+void keysStop() {
+    if (g_threadStarted) {
+        g_scan = false;
+        pthread_join(g_thread, NULL);
+        g_threadStarted = false;
+    }
+    if (g_adcFd >= 0) close(g_adcFd);
+    g_adcFd = -1;
+}
