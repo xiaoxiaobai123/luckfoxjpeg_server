@@ -46,6 +46,7 @@ struct Params {
     double accum = 25;    // HoughCircles param2: lower = more circles
     bool continuous = false;
     std::string dumpDir;
+    int dumpEvery = 30;     // in continuous mode, save every Nth frame
     std::string imagePath;  // offline test: run detection on a file, no camera
 };
 
@@ -95,6 +96,7 @@ static bool parseArgs(int argc, char** argv, Params& p) {
         const char* v = NULL;
         if (a == "--continuous") p.continuous = true;
         else if (a == "--dump")   { if (!(v = next("--dump"))) return false; p.dumpDir = v; }
+        else if (a == "--dump-every") { if (!(v = next("--dump-every"))) return false; p.dumpEvery = atoi(v); }
         else if (a == "--image")  { if (!(v = next("--image"))) return false; p.imagePath = v; }
         else if (a == "--rmin")   { if (!(v = next("--rmin"))) return false; p.minRadius = atoi(v); }
         else if (a == "--rmax")   { if (!(v = next("--rmax"))) return false; p.maxRadius = atoi(v); }
@@ -198,7 +200,7 @@ int main(int argc, char** argv) {
         double t1 = nowMs();
 
         printf("#%d circles=%d -> %s  (%.1f ms)\n", seq, count, front ? "FRONT(1)" : "BACK(0)", t1 - t0);
-        if (!p.dumpDir.empty() && (!p.continuous || seq % 30 == 0)) dumpFrame(p, gray, circles, count, seq);
+        if (!p.dumpDir.empty() && (!p.continuous || seq % p.dumpEvery == 0)) dumpFrame(p, gray, circles, count, seq);
         RK_MPI_VI_ReleaseChnFrame(0, 0, &frame);
         ++seq;
 
