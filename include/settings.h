@@ -11,7 +11,7 @@ struct Settings {
     int maxDia = 240;     // largest circle diameter, same unit
     int roundness = 25;   // Hough accumulator threshold: higher = only rounder circles
     int edge = 100;       // Canny high threshold: lower = more sensitive to weak edges
-    int contrast = 30;    // dark-hole mode: how much darker than the surroundings a pixel must be (grey levels)
+    int contrast = 18;    // dark-hole mode: how much darker than the surroundings a pixel must be (grey levels)
     int shape = 65;       // dark-hole mode: how round the dark spot must be, percent (100 = perfect circle)
     int exposure = 0;     // exposure time in 0.1 ms units, 0 = auto
     int gain = 0;         // sensor gain in 0.1x units, 0 = auto (fix both exposure and gain for a steady picture)
