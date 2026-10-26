@@ -180,7 +180,7 @@ void Ui::render(cv::Mat& out, const Snapshot& snap) {
     // menu: scrolling window of kRows lines under the live preview
     cv::rectangle(out, cv::Rect(0, 0, 240, 24), cv::Scalar(0, 0, 0), -1);
     text(out, fast_ ? "MENU  [x10]" : "MENU", 6, 18, 0.55, cv::Scalar(0, 255, 255));
-    text(out, "tap here: x10", 140, 17, 0.4, cv::Scalar(150, 150, 150));
+    text(out, "tap = x10", 160, 17, 0.4, cv::Scalar(150, 150, 150));
     int first = firstRow();
     for (int row = 0; row < kRows; ++row) {
         int i = first + row;
