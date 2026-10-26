@@ -23,11 +23,11 @@ file(GLOB SRC_FILES "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cc")
 add_executable(${PROJECT_NAME} ${SRC_FILES})
 
 target_compile_options(${PROJECT_NAME} PRIVATE
-    -O2 -Wall
+    -Os -Wall -ffunction-sections -fdata-sections
     -DISP_HW_V30 -DRKPLATFORM=ON -DARCH64=OFF -DUAPI2
     -D_LARGEFILE_SOURCE -D_LARGEFILE64_SOURCE -D_FILE_OFFSET_BITS=64)
 
-set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-rpath-link,${RKMPI_ROOT}/lib:/usr/lib")
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-rpath-link,${RKMPI_ROOT}/lib:/usr/lib -Wl,--gc-sections -s")
 
 target_link_libraries(${PROJECT_NAME}
     ${OpenCV_LIBS}
