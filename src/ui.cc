@@ -18,6 +18,7 @@ enum Item {
 const int kRows = 4;      // menu lines visible at once
 const int kRowTop = 184;  // first menu row, pixels
 const int kRowH = 20;
+const int kHeaderH = 30;  // header bar height: touching it toggles the x10 step
 
 long long nowMs() {
     struct timespec t;
@@ -185,7 +186,7 @@ void Ui::onTouch(const TouchEvent& e) {
         if (!e.repeat) enterMenu();
         return;
     }
-    if (e.y < 24) {  // header
+    if (e.y < kHeaderH) {  // header
         if (!e.repeat) fast_ = !fast_;
         return;
     }
@@ -258,18 +259,20 @@ void Ui::render(cv::Mat& out, const Snapshot& snap) {
     }
 
     // menu: scrolling window of kRows lines under the live preview
-    cv::rectangle(out, cv::Rect(0, 0, 240, 24), cv::Scalar(0, 0, 0), -1);
-    text(out, fast_ ? "MENU  [x10]" : "MENU", 22, 18, 0.55, cv::Scalar(0, 255, 255));
-    text(out, "tap = x10", 140, 17, 0.4, cv::Scalar(150, 150, 150));
+    // header bar, kept clear of the rounded top corners: "MENU" on the left, the live verdict on the right
+    cv::rectangle(out, cv::Rect(0, 0, 240, kHeaderH), cv::Scalar(0, 0, 0), -1);
+    text(out, fast_ ? "MENU x10" : "MENU", 26, 22, 0.55, cv::Scalar(0, 255, 255));
 
-    // live verdict for what the camera sees right now: front (OK, count matches) or back (NG)
+    // live verdict for what the camera sees right now: front (OK, count matches) or back (NG).
+    // The text is measured and centred inside its coloured block so it can never spill out of it.
     bool liveOk = (snap.count == s.target);
-    cv::Rect badge(150, 30, 70, 44);
+    cv::Rect badge(128, 5, 86, 22);
     cv::rectangle(out, badge, liveOk ? cv::Scalar(40, 170, 40) : cv::Scalar(40, 40, 200), -1);
-    cv::rectangle(out, badge, cv::Scalar(255, 255, 255), 1);
-    text(out, liveOk ? "OK" : "NG", badge.x + 10, badge.y + 28, 1.0, cv::Scalar(255, 255, 255), 2);
-    snprintf(b, sizeof(b), "%d/%d", snap.count, s.target);
-    text(out, b, badge.x + 8, badge.y + 41, 0.4, cv::Scalar(255, 255, 255));
+    snprintf(b, sizeof(b), "%s %d/%d", liveOk ? "OK" : "NG", snap.count, s.target);
+    int base = 0;
+    cv::Size ts = cv::getTextSize(b, cv::FONT_HERSHEY_SIMPLEX, 0.55, 2, &base);
+    text(out, b, badge.x + (badge.width - ts.width) / 2, badge.y + (badge.height + ts.height) / 2,
+         0.55, cv::Scalar(255, 255, 255), 2);
     int first = firstRow();
     for (int row = 0; row < kRows; ++row) {
         int i = first + row;
