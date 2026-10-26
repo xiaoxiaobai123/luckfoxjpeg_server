@@ -96,14 +96,15 @@ static void setOutputs(int ok, int ng, int err) {
 // ---------------------------------------------------------------------------------------------
 
 // Circles are searched only inside the detection area (ROI); everything outside it is ignored.
-// The returned centres are in "work" pixels of the whole picture (camera pixels * 0.5), ROI offset included.
+// The area is scaled to fit 320x240 at most: a big area is searched at half size (fast), a small one at full
+// size, so small circles keep enough edge pixels. Returned circles are in camera pixels.
 static int countCircles(const cv::Mat& gray, const Settings& s, std::vector<cv::Vec3f>& circles) {
-    double k = (double)WORK_W / gray.cols;  // camera pixels -> work pixels
-    int minR = std::max(2, cvRound(s.minDia * 0.5 * k));
-    int maxR = std::max(minR + 1, cvRound(s.maxDia * 0.5 * k));
     cv::Rect roi(s.roiX, s.roiY, s.roiW, s.roiH);
     roi &= cv::Rect(0, 0, gray.cols, gray.rows);
     if (roi.width < 8 || roi.height < 8) roi = cv::Rect(0, 0, gray.cols, gray.rows);
+    double k = std::min(1.0, std::min((double)WORK_W / roi.width, (double)WORK_H / roi.height));  // camera -> work
+    int minR = std::max(2, cvRound(s.minDia * 0.5 * k));
+    int maxR = std::max(minR + 1, cvRound(s.maxDia * 0.5 * k));
     cv::Mat small;
     cv::resize(gray(roi), small, cv::Size(std::max(8, cvRound(roi.width * k)), std::max(8, cvRound(roi.height * k))),
                0, 0, cv::INTER_AREA);
@@ -111,9 +112,10 @@ static int countCircles(const cv::Mat& gray, const Settings& s, std::vector<cv::
     circles.clear();
     cv::HoughCircles(small, circles, cv::HOUGH_GRADIENT, 1.0, std::max(8, cvRound(minR * 1.5)),
                      s.edge, s.roundness, minR, maxR);
-    for (size_t i = 0; i < circles.size(); ++i) {
-        circles[i][0] += (float)(roi.x * k);
-        circles[i][1] += (float)(roi.y * k);
+    for (size_t i = 0; i < circles.size(); ++i) {  // back to camera pixels
+        circles[i][0] = (float)(circles[i][0] / k + roi.x);
+        circles[i][1] = (float)(circles[i][1] / k + roi.y);
+        circles[i][2] = (float)(circles[i][2] / k);
     }
     return (int)circles.size();
 }
@@ -220,10 +222,9 @@ static void publishCamView(const cv::Mat& gray, const std::vector<cv::Vec3f>& ci
     refreshSysStats(sys);
     cv::Mat vis;
     cv::cvtColor(gray, vis, cv::COLOR_GRAY2BGR);
-    double k = (double)gray.cols / WORK_W;
-    for (size_t i = 0; i < circles.size(); ++i)
-        cv::circle(vis, cv::Point(cvRound(circles[i][0] * k), cvRound(circles[i][1] * k)),
-                   cvRound(circles[i][2] * k), cv::Scalar(0, 255, 0), 2);
+    for (size_t i = 0; i < circles.size(); ++i)  // circles are already in camera pixels
+        cv::circle(vis, cv::Point(cvRound(circles[i][0]), cvRound(circles[i][1])),
+                   cvRound(circles[i][2]), cv::Scalar(0, 255, 0), 2);
     char t[96];
     const char* r = result == 1 ? "OK" : (result == 0 ? "NG" : (result == 2 ? "ERR" : "--"));
     snprintf(t, sizeof(t), "circles=%d  %s", count, r);
@@ -487,7 +488,7 @@ int main(int argc, char** argv) {
         cv::Mat small;
         cv::resize(gray, small, cv::Size(240, 180), 0, 0, cv::INTER_AREA);
         cv::cvtColor(small, snap.preview, cv::COLOR_GRAY2BGR);
-        double ks = 240.0 / WORK_W;
+        double ks = 240.0 / CAP_WIDTH;  // camera pixels -> 240 px wide preview
         for (size_t i = 0; i < circles.size(); ++i)
             snap.circles.push_back(cv::Vec3f(circles[i][0] * ks, circles[i][1] * ks, circles[i][2] * ks));
         snap.count = count;
