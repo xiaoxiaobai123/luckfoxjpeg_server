@@ -213,54 +213,68 @@ static void text(cv::Mat& img, const std::string& s, int x, int y, double scale,
     cv::putText(img, s, cv::Point(x, y), cv::FONT_HERSHEY_SIMPLEX, scale, c, thick, cv::LINE_AA);
 }
 
+// Blend a colour over part of the picture so text stays readable while the camera picture shows through.
+static void shade(cv::Mat& img, const cv::Rect& r, const cv::Scalar& color, double alpha) {
+    cv::Rect rr = r & cv::Rect(0, 0, img.cols, img.rows);
+    if (rr.width <= 0 || rr.height <= 0) return;
+    cv::Mat part = img(rr);
+    cv::Mat fill(part.size(), part.type(), color);
+    cv::addWeighted(fill, alpha, part, 1.0 - alpha, 0.0, part);
+}
+
+// The camera picture fills the whole screen; the menu and results are laid over it. The picture is scaled to the
+// screen height, so it is wider than the screen: the visible window follows the detection area.
 void Ui::render(cv::Mat& out, const Snapshot& snap) {
     out.create(284, 240, CV_8UC3);
     out.setTo(cv::Scalar(24, 24, 24));
-
-    if (!snap.preview.empty()) {
-        cv::Rect r(0, 0, std::min(240, snap.preview.cols), std::min(180, snap.preview.rows));
-        snap.preview(r).copyTo(out(r));
-        if (menu_ || snap.result >= 0)
-            for (size_t i = 0; i < snap.circles.size(); ++i)
-                cv::circle(out, cv::Point(cvRound(snap.circles[i][0]), cvRound(snap.circles[i][1])),
-                           cvRound(snap.circles[i][2]), cv::Scalar(0, 255, 0), 2, cv::LINE_AA);
-    }
-
     Settings s = shared_.get();
     std::vector<int> items = visibleItems(s.mode);
     char b[64];
 
-    // detection area: only what is inside the frame is looked at (preview is 0.375 of the camera picture)
+    double sc = 0;  // preview pixels per camera pixel
+    int panX = 0;   // left edge of the visible window inside the preview
+    if (!snap.preview.empty()) {
+        sc = snap.preview.rows / 480.0;
+        int centre = cvRound((s.roiX + s.roiW / 2) * sc);
+        panX = std::max(0, std::min(centre - 120, snap.preview.cols - 240));
+        cv::Rect r(panX, 0, std::min(240, snap.preview.cols - panX), std::min(284, snap.preview.rows));
+        snap.preview(r).copyTo(out(cv::Rect(0, 0, r.width, r.height)));
+        if (menu_ || snap.result >= 0)
+            for (size_t i = 0; i < snap.circles.size(); ++i)
+                cv::circle(out, cv::Point(cvRound(snap.circles[i][0]) - panX, cvRound(snap.circles[i][1])),
+                           cvRound(snap.circles[i][2]), cv::Scalar(0, 255, 0), 2, cv::LINE_AA);
+    }
+
+    // detection area: only what is inside the frame is looked at
     bool areaRow = menu_ && sel_ < (int)items.size() && items[sel_] >= IT_AX && items[sel_] <= IT_AH;
-    if (s.roiX != 0 || s.roiY != 0 || s.roiW != 640 || s.roiH != 480 || areaRow) {
-        cv::Rect ra(cvRound(s.roiX * 0.375), cvRound(s.roiY * 0.375), cvRound(s.roiW * 0.375), cvRound(s.roiH * 0.375));
-        ra &= cv::Rect(0, 0, 240, 180);
+    if (sc > 0 && (s.roiX != 0 || s.roiY != 0 || s.roiW != 640 || s.roiH != 480 || areaRow)) {
+        cv::Rect ra(cvRound(s.roiX * sc) - panX, cvRound(s.roiY * sc), cvRound(s.roiW * sc), cvRound(s.roiH * sc));
         cv::rectangle(out, ra, cv::Scalar(0, 200, 255), 1);
     }
 
     if (!menu_) {
         const char* label = "--";
-        cv::Scalar col(160, 160, 160);
-        if (snap.result == 1) { label = "OK"; col = cv::Scalar(60, 220, 60); }
-        else if (snap.result == 0) { label = "NG"; col = cv::Scalar(60, 60, 240); }
-        else if (snap.result == 2) { label = "ERR"; col = cv::Scalar(0, 140, 255); }
+        cv::Scalar col(190, 190, 190);
+        if (snap.result == 1) { label = "OK"; col = cv::Scalar(60, 230, 60); }
+        else if (snap.result == 0) { label = "NG"; col = cv::Scalar(70, 70, 255); }
+        else if (snap.result == 2) { label = "ERR"; col = cv::Scalar(0, 150, 255); }
         // the LCD has rounded corners: keep everything about 16 px away from the left, right and bottom edges
-        text(out, label, 18, 244, 2.0, col, 4);
+        shade(out, cv::Rect(0, 206, 240, 78), cv::Scalar(0, 0, 0), 0.6);
+        text(out, label, 18, 250, 2.0, col, 4);
         snprintf(b, sizeof(b), "found %d/%d", snap.count, s.target);
-        text(out, b, 108, 208, 0.5, cv::Scalar(230, 230, 230));
+        text(out, b, 108, 232, 0.5, cv::Scalar(240, 240, 240));
         snprintf(b, sizeof(b), "%.0ffps %.1fms", snap.fps, snap.detectMs);
-        text(out, b, 108, 230, 0.45, cv::Scalar(180, 180, 180));
-        text(out, "tap or OK for menu", 46, 268, 0.42, cv::Scalar(150, 150, 150));
+        text(out, b, 108, 252, 0.45, cv::Scalar(190, 190, 190));
+        text(out, "tap or OK for menu", 46, 274, 0.42, cv::Scalar(170, 170, 170));
         if (nowMs() < messageUntil_) {
-            cv::rectangle(out, cv::Rect(0, 150, 240, 30), cv::Scalar(0, 0, 0), -1);
+            shade(out, cv::Rect(0, 150, 240, 30), cv::Scalar(0, 0, 0), 0.75);
             text(out, message_, 18, 172, 0.7, cv::Scalar(0, 255, 255), 2);
         }
         return;
     }
 
-    // menu: scrolling window of kRows lines under the live preview
-    // header bar, kept clear of the rounded top corners: "MENU" on the left, the live verdict on the right
-    cv::rectangle(out, cv::Rect(0, 0, 240, kHeaderH), cv::Scalar(0, 0, 0), -1);
+    // menu, laid over the picture: header at the top, a scrolling window of kRows lines at the bottom
+    shade(out, cv::Rect(0, 0, 240, kHeaderH), cv::Scalar(0, 0, 0), 0.6);
     text(out, fast_ ? "MENU x10" : "MENU", 26, 22, 0.55, cv::Scalar(0, 255, 255));
 
     // live verdict for what the camera sees right now: front (OK, count matches) or back (NG).
@@ -273,6 +287,8 @@ void Ui::render(cv::Mat& out, const Snapshot& snap) {
     cv::Size ts = cv::getTextSize(b, cv::FONT_HERSHEY_SIMPLEX, 0.55, 2, &base);
     text(out, b, badge.x + (badge.width - ts.width) / 2, badge.y + (badge.height + ts.height) / 2,
          0.55, cv::Scalar(255, 255, 255), 2);
+
+    shade(out, cv::Rect(0, kRowTop - 2, 240, kRows * kRowH + 4), cv::Scalar(0, 0, 0), 0.62);
     int first = firstRow();
     for (int row = 0; row < kRows; ++row) {
         int i = first + row;
@@ -280,14 +296,15 @@ void Ui::render(cv::Mat& out, const Snapshot& snap) {
         int y = kRowTop + row * kRowH;
         bool on = (i == sel_);
         bool pending = (items[i] == IT_SAVE && saveConfirmUntil_ > nowMs());
-        if (on) cv::rectangle(out, cv::Rect(0, y, 240, kRowH), pending ? cv::Scalar(30, 120, 220) : cv::Scalar(160, 90, 20), -1);
-        cv::Scalar fg = on ? cv::Scalar(255, 255, 255) : cv::Scalar(210, 210, 210);
+        if (on) shade(out, cv::Rect(0, y, 240, kRowH), pending ? cv::Scalar(30, 120, 220) : cv::Scalar(200, 110, 30), 0.85);
+        cv::Scalar fg = on ? cv::Scalar(255, 255, 255) : cv::Scalar(225, 225, 225);
         if (isValueItem(items[i])) {
-            text(out, "<", 14, y + 15, 0.55, cv::Scalar(120, 200, 255), 2);
-            text(out, ">", 212, y + 15, 0.55, cv::Scalar(120, 200, 255), 2);
+            text(out, "<", 14, y + 15, 0.55, cv::Scalar(120, 210, 255), 2);
+            text(out, ">", 212, y + 15, 0.55, cv::Scalar(120, 210, 255), 2);
         }
         text(out, itemText(items[i], s), 32, y + 15, 0.5, fg);
     }
+    shade(out, cv::Rect(0, kRowTop + kRows * kRowH + 4, 240, 24), cv::Scalar(0, 0, 0), 0.6);
     snprintf(b, sizeof(b), "found %d  (%.1f ms)", snap.count, snap.detectMs);
-    text(out, b, 66, 276, 0.42, cv::Scalar(150, 150, 150));
+    text(out, b, 66, 276, 0.42, cv::Scalar(190, 190, 190));
 }

@@ -10,8 +10,8 @@
 
 // What the capture thread hands to the screen.
 struct Snapshot {
-    cv::Mat preview;                 // 240x180 BGR camera picture
-    std::vector<cv::Vec3f> circles;  // in preview pixels
+    cv::Mat preview;                 // 379x284 BGR camera picture (full screen height)
+    std::vector<cv::Vec3f> circles;  // in preview pixels (centre x, centre y, radius)
     int count = 0;
     int result = -1;                 // -1 none yet, 0 NG, 1 OK, 2 error
     double fps = 0;

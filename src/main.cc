@@ -546,9 +546,9 @@ int main(int argc, char** argv) {
         // picture for the LCD thread
         Snapshot snap;
         cv::Mat small;
-        cv::resize(gray, small, cv::Size(240, 180), 0, 0, cv::INTER_AREA);
+        cv::resize(gray, small, cv::Size(379, 284), 0, 0, cv::INTER_AREA);  // full screen height, 4:3 stays 4:3
         cv::cvtColor(small, snap.preview, cv::COLOR_GRAY2BGR);
-        double ks = 240.0 / WORK_W;
+        double ks = 284.0 / CAP_HEIGHT * (CAP_WIDTH / (double)WORK_W);  // work pixels -> preview pixels
         for (size_t i = 0; i < circles.size(); ++i)
             snap.circles.push_back(cv::Vec3f(circles[i][0] * ks, circles[i][1] * ks, circles[i][2] * ks));
         snap.count = count;
