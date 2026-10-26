@@ -63,6 +63,7 @@ struct Params {
     std::string imagePath;
     // command-line overrides of the saved settings (-1 = not given)
     int oTarget = -1, oMinDia = -1, oMaxDia = -1, oRound = -1, oEdge = -1, oExposure = -1;
+    int oMode = -1, oContrast = -1, oShape = -1;
 };
 
 static Params g_p;
@@ -116,6 +117,58 @@ static int countCircles(const cv::Mat& gray, const Settings& s, std::vector<cv::
         circles[i][1] += (float)(roi.y * k);
     }
     return (int)circles.size();
+}
+
+// Dark-hole mode: a hole is a patch that is darker than its surroundings, so no clear edge is needed.
+//   1. cut out the detection area (a small area is searched at full size, a large one at half size)
+//   2. subtract the local average brightness: holes are what stays well above "contrast" grey levels
+//   3. keep the blobs whose size and roundness fit and that do not touch the border of the area
+// Returned circles use the same convention as countCircles(): centre/radius in half-size camera pixels.
+static int countDarkHoles(const cv::Mat& gray, const Settings& s, std::vector<cv::Vec3f>& circles) {
+    cv::Rect roi(s.roiX, s.roiY, s.roiW, s.roiH);
+    roi &= cv::Rect(0, 0, gray.cols, gray.rows);
+    if (roi.width < 8 || roi.height < 8) roi = cv::Rect(0, 0, gray.cols, gray.rows);
+    double k = std::min(1.0, std::min((double)WORK_W / roi.width, (double)WORK_H / roi.height));
+
+    cv::Mat img;
+    cv::resize(gray(roi), img, cv::Size(std::max(8, cvRound(roi.width * k)), std::max(8, cvRound(roi.height * k))),
+               0, 0, cv::INTER_AREA);
+    cv::GaussianBlur(img, img, cv::Size(3, 3), 0);
+
+    int win = cvRound(s.maxDia * k * 2.0);  // averaging window, a bit wider than the biggest hole
+    win = std::min(151, std::max(15, win));
+    if (win % 2 == 0) ++win;
+    cv::Mat bg, diff, mask;
+    cv::boxFilter(img, bg, -1, cv::Size(win, win), cv::Point(-1, -1), true, cv::BORDER_REPLICATE);
+    cv::subtract(bg, img, diff);  // > 0 where the pixel is darker than its surroundings
+    cv::threshold(diff, mask, s.contrast, 255, cv::THRESH_BINARY);
+    cv::morphologyEx(mask, mask, cv::MORPH_OPEN, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(3, 3)));
+
+    std::vector<std::vector<cv::Point> > contours;
+    cv::findContours(mask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_NONE);
+    circles.clear();
+    const double minD = s.minDia * k, maxD = s.maxDia * k;
+    for (size_t i = 0; i < contours.size(); ++i) {
+        double area = cv::contourArea(contours[i]);
+        if (area < 3) continue;
+        double d = 2.0 * std::sqrt(area / CV_PI);  // diameter of the circle with the same area
+        if (d < minD || d > maxD) continue;
+        cv::Rect bb = cv::boundingRect(contours[i]);
+        if (bb.x <= 0 || bb.y <= 0 || bb.x + bb.width >= mask.cols || bb.y + bb.height >= mask.rows) continue;  // cut off
+        double per = cv::arcLength(contours[i], true);
+        if (per <= 0) continue;
+        double circ = std::min(1.0, 4.0 * CV_PI * area / (per * per));
+        if (circ * 100.0 < s.shape) continue;
+        cv::Moments m = cv::moments(contours[i]);
+        if (m.m00 <= 0) continue;
+        double cx = (m.m10 / m.m00) / k + roi.x, cy = (m.m01 / m.m00) / k + roi.y;  // camera pixels
+        circles.push_back(cv::Vec3f((float)(cx * 0.5), (float)(cy * 0.5), (float)(d / k * 0.25)));
+    }
+    return (int)circles.size();
+}
+
+static int detect(const cv::Mat& gray, const Settings& s, std::vector<cv::Vec3f>& circles) {
+    return s.mode == 1 ? countDarkHoles(gray, s, circles) : countCircles(gray, s, circles);
 }
 
 // Own ISP start-up (same steps as the Rockchip sample): the public sample library does not hand out
@@ -327,6 +380,9 @@ static bool parseArgs(int argc, char** argv, Params& p) {
         else if (a == "--touch") p.touchDev = v;
         else if (a == "--touch-rst") p.touchRst = atoi(v);
         else if (a == "--target") p.oTarget = atoi(v);
+        else if (a == "--mode") p.oMode = atoi(v);
+        else if (a == "--contrast") p.oContrast = atoi(v);
+        else if (a == "--shape") p.oShape = atoi(v);
         else if (a == "--dmin") p.oMinDia = atoi(v);
         else if (a == "--dmax") p.oMaxDia = atoi(v);
         else if (a == "--round") p.oRound = atoi(v);
@@ -357,6 +413,9 @@ static Settings initialSettings() {
     if (g_p.oRound >= 0) s.roundness = g_p.oRound;
     if (g_p.oEdge >= 0) s.edge = g_p.oEdge;
     if (g_p.oExposure >= 0) s.exposure = g_p.oExposure;
+    if (g_p.oMode >= 0) s.mode = g_p.oMode;
+    if (g_p.oContrast >= 0) s.contrast = g_p.oContrast;
+    if (g_p.oShape >= 0) s.shape = g_p.oShape;
     s.clamp();
     return s;
 }
@@ -376,7 +435,7 @@ int main(int argc, char** argv) {
         std::vector<cv::Vec3f> circles;
         int count = 0;
         double t0 = nowMs();
-        for (int i = 0; i < 20; ++i) count = countCircles(img, settings, circles);
+        for (int i = 0; i < 20; ++i) count = detect(img, settings, circles);
         printf("%s: circles=%d -> %s  (%.1f ms/run)\n", g_p.imagePath.c_str(), count,
                count == settings.target ? "OK" : "NG", (nowMs() - t0) / 20);
         return 0;
@@ -459,7 +518,7 @@ int main(int argc, char** argv) {
 
         if (measure || g_menuOpen || g_p.continuous) {
             double t0 = nowMs();
-            count = countCircles(gray, s, circles);
+            count = detect(gray, s, circles);
             detectMs = nowMs() - t0;
             if (measure || g_p.continuous) {
                 result = (count == s.target) ? 1 : 0;
