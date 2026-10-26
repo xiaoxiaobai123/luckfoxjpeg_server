@@ -275,7 +275,6 @@ void Ui::render(cv::Mat& out, const Snapshot& snap) {
 
     // menu, laid over the picture: header at the top, a scrolling window of kRows lines at the bottom
     shade(out, cv::Rect(0, 0, 240, kHeaderH), cv::Scalar(0, 0, 0), 0.6);
-    text(out, fast_ ? "MENU x10" : "MENU", 26, 22, 0.55, cv::Scalar(0, 255, 255));
 
     // live verdict for what the camera sees right now: front (OK, count matches) or back (NG).
     // The text is measured and centred inside its coloured block so it can never spill out of it.
@@ -287,6 +286,8 @@ void Ui::render(cv::Mat& out, const Snapshot& snap) {
     cv::Size ts = cv::getTextSize(b, cv::FONT_HERSHEY_SIMPLEX, 0.55, 2, &base);
     text(out, b, badge.x + (badge.width - ts.width) / 2, badge.y + (badge.height + ts.height) / 2,
          0.55, cv::Scalar(255, 255, 255), 2);
+    // "MENU" sits on the same baseline as the verdict text so the two line up
+    text(out, fast_ ? "MENU x10" : "MENU", 26, badge.y + (badge.height + ts.height) / 2, 0.55, cv::Scalar(0, 255, 255), 2);
 
     shade(out, cv::Rect(0, kRowTop - 2, 240, kRows * kRowH + 4), cv::Scalar(0, 0, 0), 0.62);
     int first = firstRow();
