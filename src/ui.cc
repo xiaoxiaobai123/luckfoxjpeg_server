@@ -243,23 +243,33 @@ void Ui::render(cv::Mat& out, const Snapshot& snap) {
         if (snap.result == 1) { label = "OK"; col = cv::Scalar(60, 220, 60); }
         else if (snap.result == 0) { label = "NG"; col = cv::Scalar(60, 60, 240); }
         else if (snap.result == 2) { label = "ERR"; col = cv::Scalar(0, 140, 255); }
-        text(out, label, 8, 250, 2.0, col, 4);
+        // the LCD has rounded corners: keep everything about 16 px away from the left, right and bottom edges
+        text(out, label, 18, 244, 2.0, col, 4);
         snprintf(b, sizeof(b), "found %d/%d", snap.count, s.target);
-        text(out, b, 104, 208, 0.5, cv::Scalar(230, 230, 230));
+        text(out, b, 108, 208, 0.5, cv::Scalar(230, 230, 230));
         snprintf(b, sizeof(b), "%.0ffps %.1fms", snap.fps, snap.detectMs);
-        text(out, b, 104, 230, 0.45, cv::Scalar(180, 180, 180));
-        text(out, "tap or OK for menu", 10, 276, 0.45, cv::Scalar(150, 150, 150));
+        text(out, b, 108, 230, 0.45, cv::Scalar(180, 180, 180));
+        text(out, "tap or OK for menu", 46, 268, 0.42, cv::Scalar(150, 150, 150));
         if (nowMs() < messageUntil_) {
             cv::rectangle(out, cv::Rect(0, 150, 240, 30), cv::Scalar(0, 0, 0), -1);
-            text(out, message_, 10, 172, 0.7, cv::Scalar(0, 255, 255), 2);
+            text(out, message_, 18, 172, 0.7, cv::Scalar(0, 255, 255), 2);
         }
         return;
     }
 
     // menu: scrolling window of kRows lines under the live preview
     cv::rectangle(out, cv::Rect(0, 0, 240, 24), cv::Scalar(0, 0, 0), -1);
-    text(out, fast_ ? "MENU  [x10]" : "MENU", 6, 18, 0.55, cv::Scalar(0, 255, 255));
-    text(out, "tap = x10", 160, 17, 0.4, cv::Scalar(150, 150, 150));
+    text(out, fast_ ? "MENU  [x10]" : "MENU", 22, 18, 0.55, cv::Scalar(0, 255, 255));
+    text(out, "tap = x10", 140, 17, 0.4, cv::Scalar(150, 150, 150));
+
+    // live verdict for what the camera sees right now: front (OK, count matches) or back (NG)
+    bool liveOk = (snap.count == s.target);
+    cv::Rect badge(150, 30, 70, 44);
+    cv::rectangle(out, badge, liveOk ? cv::Scalar(40, 170, 40) : cv::Scalar(40, 40, 200), -1);
+    cv::rectangle(out, badge, cv::Scalar(255, 255, 255), 1);
+    text(out, liveOk ? "OK" : "NG", badge.x + 10, badge.y + 28, 1.0, cv::Scalar(255, 255, 255), 2);
+    snprintf(b, sizeof(b), "%d/%d", snap.count, s.target);
+    text(out, b, badge.x + 8, badge.y + 41, 0.4, cv::Scalar(255, 255, 255));
     int first = firstRow();
     for (int row = 0; row < kRows; ++row) {
         int i = first + row;
@@ -270,11 +280,11 @@ void Ui::render(cv::Mat& out, const Snapshot& snap) {
         if (on) cv::rectangle(out, cv::Rect(0, y, 240, kRowH), pending ? cv::Scalar(30, 120, 220) : cv::Scalar(160, 90, 20), -1);
         cv::Scalar fg = on ? cv::Scalar(255, 255, 255) : cv::Scalar(210, 210, 210);
         if (isValueItem(items[i])) {
-            text(out, "<", 8, y + 15, 0.55, cv::Scalar(120, 200, 255), 2);
-            text(out, ">", 222, y + 15, 0.55, cv::Scalar(120, 200, 255), 2);
+            text(out, "<", 14, y + 15, 0.55, cv::Scalar(120, 200, 255), 2);
+            text(out, ">", 212, y + 15, 0.55, cv::Scalar(120, 200, 255), 2);
         }
-        text(out, itemText(items[i], s), 26, y + 15, 0.5, fg);
+        text(out, itemText(items[i], s), 32, y + 15, 0.5, fg);
     }
     snprintf(b, sizeof(b), "found %d  (%.1f ms)", snap.count, snap.detectMs);
-    text(out, b, 6, 280, 0.42, cv::Scalar(150, 150, 150));
+    text(out, b, 66, 276, 0.42, cv::Scalar(150, 150, 150));
 }
