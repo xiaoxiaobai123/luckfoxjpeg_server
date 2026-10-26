@@ -54,7 +54,8 @@ bool Display::open(const char* spidev, int pinDc, int pinRst, int pinBl, int hz)
         fclose(f);
     }
 
-    if (!dc_.openOut(pinDc, 0) || !rst_.openOut(pinRst, 1) || !bl_.openOut(pinBl, 0)) {
+    // a negative backlight pin means the backlight is wired straight to 3.3V
+    if (!dc_.openOut(pinDc, 0) || !rst_.openOut(pinRst, 1) || (pinBl >= 0 && !bl_.openOut(pinBl, 0))) {
         close(fd_);
         fd_ = -1;
         return false;

@@ -6,7 +6,10 @@
 #include <opencv2/imgproc/imgproc.hpp>
 
 static const int kItems = 8;
-static const int kRows = 4;  // menu lines visible at once
+static const int kRows = 4;      // menu lines visible at once
+static const int kRowTop = 184;  // first menu row, pixels
+static const int kRowH = 20;
+static const int kValueRows = 6; // rows 0..5 hold a value, 6 = save, 7 = discard
 
 static long long nowMs() {
     struct timespec t;
@@ -15,7 +18,8 @@ static long long nowMs() {
 }
 
 Ui::Ui(SharedSettings& shared, const std::string& confPath)
-    : shared_(shared), confPath_(confPath), menu_(false), sel_(0), fast_(false), messageUntil_(0) {}
+    : shared_(shared), confPath_(confPath), menu_(false), sel_(0), fast_(false), messageUntil_(0),
+      saveConfirmUntil_(0) {}
 
 std::string Ui::itemText(int i, const Settings& s) const {
     char b[48];
@@ -29,10 +33,28 @@ std::string Ui::itemText(int i, const Settings& s) const {
         if (s.exposure == 0) snprintf(b, sizeof(b), "Exposure  auto");
         else snprintf(b, sizeof(b), "Exposure  %.1f ms", s.exposure / 10.0);
         break;
-    case 6: snprintf(b, sizeof(b), "[ Save and exit ]"); break;
+    case 6:
+        if (saveConfirmUntil_ > nowMs()) snprintf(b, sizeof(b), "[ Again to SAVE ]");
+        else snprintf(b, sizeof(b), "[ Save and exit ]");
+        break;
     default: snprintf(b, sizeof(b), "[ Discard changes ]"); break;
     }
     return b;
+}
+
+int Ui::firstRow() const {
+    int first = sel_ - kRows / 2;
+    if (first < 0) first = 0;
+    if (first > kItems - kRows) first = kItems - kRows;
+    return first;
+}
+
+void Ui::enterMenu() {
+    menu_ = true;
+    sel_ = 0;
+    fast_ = false;
+    saveConfirmUntil_ = 0;
+    backup_ = shared_.get();
 }
 
 void Ui::changeValue(int dir) {
@@ -50,36 +72,69 @@ void Ui::changeValue(int dir) {
     shared_.set(s);
 }
 
+// "OK" on the selected row. Saving needs two presses within three seconds so a stray key or a noisy
+// input cannot overwrite the saved settings by accident.
+void Ui::activate() {
+    if (sel_ == 6) {
+        long long t = nowMs();
+        if (saveConfirmUntil_ > t) {
+            message_ = shared_.get().save(confPath_.c_str()) ? "Saved" : "Save FAILED";
+            messageUntil_ = t + 1500;
+            saveConfirmUntil_ = 0;
+            menu_ = false;
+        } else {
+            saveConfirmUntil_ = t + 3000;
+        }
+    } else if (sel_ == 7) {
+        shared_.set(backup_);
+        message_ = "Changes discarded";
+        messageUntil_ = nowMs() + 1500;
+        saveConfirmUntil_ = 0;
+        menu_ = false;
+    }
+}
+
 void Ui::onKey(Key k) {
     if (!menu_) {
-        if (k == K_OK) {
-            menu_ = true;
-            sel_ = 0;
-            fast_ = false;
-            backup_ = shared_.get();
-        }
+        if (k == K_OK) enterMenu();
         return;
     }
     switch (k) {
-    case K_UP: sel_ = (sel_ + kItems - 1) % kItems; break;
-    case K_DOWN: sel_ = (sel_ + 1) % kItems; break;
+    case K_UP: sel_ = (sel_ + kItems - 1) % kItems; saveConfirmUntil_ = 0; break;
+    case K_DOWN: sel_ = (sel_ + 1) % kItems; saveConfirmUntil_ = 0; break;
     case K_LEFT: changeValue(-1); break;
     case K_RIGHT: changeValue(+1); break;
     case K_ADJ: fast_ = !fast_; break;
-    case K_OK:
-        if (sel_ == 6) {
-            message_ = shared_.get().save(confPath_.c_str()) ? "Saved" : "Save FAILED";
-            messageUntil_ = nowMs() + 1500;
-            menu_ = false;
-        } else if (sel_ == 7) {
-            shared_.set(backup_);
-            message_ = "Changes discarded";
-            messageUntil_ = nowMs() + 1500;
-            menu_ = false;
-        }
-        break;
+    case K_OK: activate(); break;
     default: break;
     }
+}
+
+void Ui::onTouch(const TouchEvent& e) {
+    if (!e.down) return;
+    if (!menu_) {
+        if (!e.repeat) enterMenu();
+        return;
+    }
+    if (e.y < 24) {  // header
+        if (!e.repeat) fast_ = !fast_;
+        return;
+    }
+    if (e.y < kRowTop || e.y >= kRowTop + kRows * kRowH) return;
+
+    int item = firstRow() + (e.y - kRowTop) / kRowH;
+    if (item < 0 || item >= kItems) return;
+
+    if (item < kValueRows && (e.x < 60 || e.x > 180)) {  // the < and > ends of a value row
+        if (sel_ != item) saveConfirmUntil_ = 0;
+        sel_ = item;
+        changeValue(e.x < 60 ? -1 : +1);
+        return;
+    }
+    if (e.repeat) return;
+    if (sel_ != item) saveConfirmUntil_ = 0;
+    sel_ = item;
+    if (item >= kValueRows) activate();
 }
 
 static void text(cv::Mat& img, const std::string& s, int x, int y, double scale, const cv::Scalar& c,
@@ -114,7 +169,7 @@ void Ui::render(cv::Mat& out, const Snapshot& snap) {
         text(out, b, 104, 208, 0.5, cv::Scalar(230, 230, 230));
         snprintf(b, sizeof(b), "%.0ffps %.1fms", snap.fps, snap.detectMs);
         text(out, b, 104, 230, 0.45, cv::Scalar(180, 180, 180));
-        text(out, "press OK for menu", 10, 276, 0.45, cv::Scalar(150, 150, 150));
+        text(out, "tap or OK for menu", 10, 276, 0.45, cv::Scalar(150, 150, 150));
         if (nowMs() < messageUntil_) {
             cv::rectangle(out, cv::Rect(0, 150, 240, 30), cv::Scalar(0, 0, 0), -1);
             text(out, message_, 10, 172, 0.7, cv::Scalar(0, 255, 255), 2);
@@ -125,15 +180,22 @@ void Ui::render(cv::Mat& out, const Snapshot& snap) {
     // menu: scrolling window of kRows lines under the live preview
     cv::rectangle(out, cv::Rect(0, 0, 240, 24), cv::Scalar(0, 0, 0), -1);
     text(out, fast_ ? "MENU  [x10]" : "MENU", 6, 18, 0.55, cv::Scalar(0, 255, 255));
-    int first = sel_ - kRows / 2;
-    if (first < 0) first = 0;
-    if (first > kItems - kRows) first = kItems - kRows;
+    text(out, "tap here: x10", 140, 17, 0.4, cv::Scalar(150, 150, 150));
+    int first = firstRow();
     for (int row = 0; row < kRows; ++row) {
         int i = first + row;
-        int y = 184 + row * 20;
+        int y = kRowTop + row * kRowH;
         bool on = (i == sel_);
-        if (on) cv::rectangle(out, cv::Rect(0, y, 240, 20), cv::Scalar(160, 90, 20), -1);
-        text(out, itemText(i, s), 8, y + 15, 0.5, on ? cv::Scalar(255, 255, 255) : cv::Scalar(210, 210, 210));
+        bool pending = (i == 6 && saveConfirmUntil_ > nowMs());
+        if (on) cv::rectangle(out, cv::Rect(0, y, 240, kRowH), pending ? cv::Scalar(30, 120, 220) : cv::Scalar(160, 90, 20), -1);
+        cv::Scalar fg = on ? cv::Scalar(255, 255, 255) : cv::Scalar(210, 210, 210);
+        if (i < kValueRows) {
+            text(out, "<", 8, y + 15, 0.55, cv::Scalar(120, 200, 255), 2);
+            text(out, ">", 222, y + 15, 0.55, cv::Scalar(120, 200, 255), 2);
+            text(out, itemText(i, s), 26, y + 15, 0.5, fg);
+        } else {
+            text(out, itemText(i, s), 26, y + 15, 0.5, fg);
+        }
     }
     snprintf(b, sizeof(b), "found %d  (%.1f ms)", snap.count, snap.detectMs);
     text(out, b, 6, 280, 0.42, cv::Scalar(150, 150, 150));

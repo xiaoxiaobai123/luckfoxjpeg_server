@@ -45,13 +45,15 @@ extern "C" {
 #define WORK_H 240
 
 struct Params {
-    // GPIO numbers = bank * 32 + group * 8 + index (A=0..D=3). Defaults match the wiring plan for
-    // both the Pico Max (RV1106) and the Pico Mini (RV1103).
-    int pinTrigger = 55, pinOk = 56, pinNg = 57, pinErr = 58;
-    int pinDc = 52, pinRst = 53, pinBl = 54;
+    // GPIO numbers = bank * 32 + group * 8 + index (A=0..D=3). Defaults are the final wiring plan for the
+    // Pico Mini (touch reset on GPIO 56, I2C3 on GPIO 58/59, LCD backlight wired straight to 3.3V).
+    int pinTrigger = 55, pinOk = 54, pinNg = 57, pinErr = 4;
+    int pinDc = 52, pinRst = 53, pinBl = -1;
     int keyPins[6] = {64, 65, 66, 67, 70, 69};  // OK, UP, DOWN, LEFT, RIGHT, ADJ
     std::string keyMode = "gpio";               // gpio | adc | none
     int adcChannel = 0;
+    std::string touchDev;   // e.g. /dev/i2c-3 (CST816D at 0x15); empty = no touch
+    int touchRst = -1;      // touch controller reset GPIO, -1 = none
     std::string spidev = "/dev/spidev0.0";
     int spiHz = 40000000;
     bool noScreen = false;
@@ -259,6 +261,8 @@ static void* uiThread(void*) {
         double t0 = nowMs();
         Key k;
         while (keysPop(k)) ui.onKey(k);
+        TouchEvent te;
+        while (touchPop(te)) ui.onTouch(te);
         g_menuOpen = ui.menuOpen();
         Snapshot snap;
         pthread_mutex_lock(&g_snapLock);
@@ -284,7 +288,9 @@ static void printUsage() {
            "  --web PORT              bench page: camera, LCD picture and keys in a browser\n"
            "  --image FILE            run the detector on a picture and exit (no camera)\n"
            "  --pins T,OK,NG,ERR      trigger input and result outputs (GPIO numbers)\n"
-           "  --lcd DC,RST,BL         LCD control pins            --spi DEV   (default /dev/spidev0.0)\n"
+           "  --lcd DC,RST,BL         LCD control pins (BL -1 = backlight wired to 3.3V)\n"
+           "  --spi DEV               LCD SPI device (default /dev/spidev0.0)\n"
+           "  --touch DEV             touch controller I2C bus, e.g. /dev/i2c-3   --touch-rst N  its reset GPIO\n"
            "  --keys gpio|adc|none    key source                  --keypins OK,UP,DOWN,LEFT,RIGHT,ADJ\n"
            "  --adc N                 SARADC channel for the resistor-ladder keys\n"
            "  --no-screen             do not open the LCD\n"
@@ -310,6 +316,8 @@ static bool parseArgs(int argc, char** argv, Params& p) {
         else if (a == "--spi") p.spidev = v;
         else if (a == "--keys") p.keyMode = v;
         else if (a == "--adc") p.adcChannel = atoi(v);
+        else if (a == "--touch") p.touchDev = v;
+        else if (a == "--touch-rst") p.touchRst = atoi(v);
         else if (a == "--target") p.oTarget = atoi(v);
         else if (a == "--dmin") p.oMinDia = atoi(v);
         else if (a == "--dmax") p.oMaxDia = atoi(v);
@@ -378,6 +386,9 @@ int main(int argc, char** argv) {
     if (g_p.keyMode == "gpio") keysOk = keysStartGpio(g_p.keyPins);
     else if (g_p.keyMode == "adc") keysOk = keysStartAdc(g_p.adcChannel);
     printf("keys: %s (%s)\n", g_p.keyMode.c_str(), keysOk ? "ready" : "none");
+
+    bool touchOk = !g_p.touchDev.empty() && touchStart(g_p.touchDev.c_str(), g_p.touchRst);
+    printf("touch: %s\n", g_p.touchDev.empty() ? "off" : (touchOk ? "ready" : "not answering"));
 
     if (!ispStart("/etc/iqfiles")) {
         fprintf(stderr, "ISP init failed\n");
@@ -484,6 +495,7 @@ int main(int argc, char** argv) {
     if (trigTid) pthread_join(trigTid, NULL);
     if (uiTid) pthread_join(uiTid, NULL);
     keysStop();
+    touchStop();
     webStop();
     setOutputs(0, 0, 0);
     RK_MPI_VI_DisableChn(0, 0);

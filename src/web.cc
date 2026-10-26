@@ -1,5 +1,6 @@
 #include "web.h"
 #include "keys.h"
+#include "touch.h"
 
 #include <netinet/in.h>
 #include <pthread.h>
@@ -33,12 +34,15 @@ const char* kPage =
     "<style>body{font-family:sans-serif;background:#111;color:#ddd;margin:12px}"
     "img{background:#000;vertical-align:top}button{font-size:18px;margin:3px;padding:8px 14px}</style>"
     "<h3>Circle checker bench view</h3>"
-    "<div><img src=/cam width=480> <img src=/ui width=240></div>"
+    "<div><img src=/cam width=480> <img id=ui src=/ui width=240 style=\"cursor:pointer\"></div>"
     "<p>Screen keys: "
     "<button onclick=\"k('ok')\">OK / menu</button><button onclick=\"k('up')\">UP</button>"
     "<button onclick=\"k('down')\">DOWN</button><button onclick=\"k('left')\">LEFT</button>"
     "<button onclick=\"k('right')\">RIGHT</button><button onclick=\"k('adj')\">ADJ x10</button></p>"
-    "<script>function k(n){fetch('/key?k='+n)}</script>";
+    "<p>Click the screen picture to tap it.</p>"
+    "<script>function k(n){fetch('/key?k='+n)}"
+    "document.getElementById('ui').onclick=function(e){var r=this.getBoundingClientRect();"
+    "fetch('/touch?x='+Math.round((e.clientX-r.left)*240/r.width)+'&y='+Math.round((e.clientY-r.top)*284/r.height))}</script>";
 
 void publish(Stream& s, const cv::Mat& bgr, int quality) {
     std::vector<unsigned char> jpg;
@@ -93,6 +97,14 @@ void* clientThread(void* arg) {
             streamTo(fd, g_cam);
         } else if (line.compare(0, 8, "GET /ui ") == 0) {
             streamTo(fd, g_ui);
+        } else if (line.compare(0, 13, "GET /touch?x=") == 0) {
+            int tx = 0, ty = 0;
+            bool ok = sscanf(line.c_str(), "GET /touch?x=%d&y=%d", &tx, &ty) == 2;
+            if (ok) touchPush(tx, ty, true, false);
+            sendAll(fd, std::string("HTTP/1.0 200 OK
+Content-Type: text/plain
+
+") + (ok ? "ok" : "bad"));
         } else if (line.compare(0, 11, "GET /key?k=") == 0) {
             size_t b = 11, e = line.find(' ', b);
             bool ok = keysPushByName(line.substr(b, e == std::string::npos ? e : e - b));
