@@ -101,10 +101,7 @@ void* clientThread(void* arg) {
             int tx = 0, ty = 0;
             bool ok = sscanf(line.c_str(), "GET /touch?x=%d&y=%d", &tx, &ty) == 2;
             if (ok) touchPush(tx, ty, true, false);
-            sendAll(fd, std::string("HTTP/1.0 200 OK
-Content-Type: text/plain
-
-") + (ok ? "ok" : "bad"));
+            sendAll(fd, std::string("HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\n\r\n") + (ok ? "ok" : "bad"));
         } else if (line.compare(0, 11, "GET /key?k=") == 0) {
             size_t b = 11, e = line.find(' ', b);
             bool ok = keysPushByName(line.substr(b, e == std::string::npos ? e : e - b));
