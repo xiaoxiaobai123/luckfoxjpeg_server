@@ -30,9 +30,11 @@ public:
     void onKey(Key k);
     void onTouch(const TouchEvent& e);
     bool menuOpen() const { return menu_; }
+    void setTouchDebug(bool on) { touchDebug_ = on; }  // draw a marker where the touch controller says the finger is
     void render(cv::Mat& out, const Snapshot& snap);  // out becomes 240x284 BGR
 
 private:
+    void renderScreen(cv::Mat& out, const Snapshot& snap);
     void enterMenu();
     void changeValue(int dir);
     void activate();       // OK on the selected row
@@ -48,6 +50,9 @@ private:
     std::string message_;
     long long messageUntil_;
     long long saveConfirmUntil_;
+    bool touchDebug_ = false;
+    int lastTouchX_ = 0, lastTouchY_ = 0;
+    long long lastTouchAt_ = 0;
 };
 
 #endif // UI_H

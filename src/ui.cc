@@ -181,6 +181,11 @@ void Ui::onKey(Key k) {
 }
 
 void Ui::onTouch(const TouchEvent& e) {
+    if (e.down) {
+        lastTouchX_ = e.x;
+        lastTouchY_ = e.y;
+        lastTouchAt_ = nowMs();
+    }
     if (!e.down) return;
     if (!menu_) {
         if (!e.repeat) enterMenu();
@@ -224,7 +229,7 @@ static void shade(cv::Mat& img, const cv::Rect& r, const cv::Scalar& color, doub
 
 // The camera picture fills the whole screen; the menu and results are laid over it. The picture is scaled to the
 // screen height, so it is wider than the screen: the visible window follows the detection area.
-void Ui::render(cv::Mat& out, const Snapshot& snap) {
+void Ui::renderScreen(cv::Mat& out, const Snapshot& snap) {
     out.create(284, 240, CV_8UC3);
     out.setTo(cv::Scalar(24, 24, 24));
     Settings s = shared_.get();
@@ -308,4 +313,18 @@ void Ui::render(cv::Mat& out, const Snapshot& snap) {
     shade(out, cv::Rect(0, kRowTop + kRows * kRowH + 4, 240, 24), cv::Scalar(0, 0, 0), 0.6);
     snprintf(b, sizeof(b), "found %d  (%.1f ms)", snap.count, snap.detectMs);
     text(out, b, 66, 276, 0.42, cv::Scalar(190, 190, 190));
+}
+
+void Ui::render(cv::Mat& out, const Snapshot& snap) {
+    renderScreen(out, snap);
+    // touch debugging: a magenta cross and ring where the controller reports the finger, kept for 1.5 s
+    if (touchDebug_ && nowMs() - lastTouchAt_ < 1500 && lastTouchAt_ > 0) {
+        cv::Point p(lastTouchX_, lastTouchY_);
+        cv::circle(out, p, 14, cv::Scalar(255, 0, 255), 2, cv::LINE_AA);
+        cv::line(out, cv::Point(p.x - 20, p.y), cv::Point(p.x + 20, p.y), cv::Scalar(255, 0, 255), 1);
+        cv::line(out, cv::Point(p.x, p.y - 20), cv::Point(p.x, p.y + 20), cv::Scalar(255, 0, 255), 1);
+        char b[32];
+        snprintf(b, sizeof(b), "%d,%d", lastTouchX_, lastTouchY_);
+        text(out, b, std::max(2, std::min(170, p.x - 24)), std::max(14, p.y - 20), 0.45, cv::Scalar(255, 0, 255), 1);
+    }
 }

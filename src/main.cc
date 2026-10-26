@@ -54,6 +54,7 @@ struct Params {
     int adcChannel = 0;
     std::string touchDev;   // e.g. /dev/i2c-3 (CST816D at 0x15); empty = no touch
     int touchRst = -1;      // touch controller reset GPIO, -1 = none
+    bool touchDebug = false;  // mark touches on the LCD and log their coordinates
     std::string spidev = "/dev/spidev0.0";
     int spiHz = 40000000;
     bool noScreen = false;
@@ -313,6 +314,7 @@ static void* triggerThread(void*) {
 // Draws the LCD picture, handles the keys and publishes the same picture to the bench page.
 static void* uiThread(void*) {
     Ui ui(g_shared, g_p.conf);
+    ui.setTouchDebug(g_p.touchDebug);
     Display disp;
     bool haveLcd = false;
     if (!g_p.noScreen) {
@@ -325,7 +327,10 @@ static void* uiThread(void*) {
         Key k;
         while (keysPop(k)) ui.onKey(k);
         TouchEvent te;
-        while (touchPop(te)) ui.onTouch(te);
+        while (touchPop(te)) {
+            if (g_p.touchDebug && te.down && !te.repeat) printf("touch x=%d y=%d\n", te.x, te.y);
+            ui.onTouch(te);
+        }
         g_menuOpen = ui.menuOpen();
         Snapshot snap;
         pthread_mutex_lock(&g_snapLock);
@@ -381,6 +386,7 @@ static bool parseArgs(int argc, char** argv, Params& p) {
         else if (a == "--adc") p.adcChannel = atoi(v);
         else if (a == "--touch") p.touchDev = v;
         else if (a == "--touch-rst") p.touchRst = atoi(v);
+        else if (a == "--touch-debug") p.touchDebug = (atoi(v) != 0);
         else if (a == "--target") p.oTarget = atoi(v);
         else if (a == "--mode") p.oMode = atoi(v);
         else if (a == "--contrast") p.oContrast = atoi(v);
