@@ -16,8 +16,8 @@ enum Item {
 };
 
 const int kRows = 4;      // menu lines visible at once
-const int kRowTop = 184;  // first menu row, pixels
-const int kRowH = 20;
+const int kRowTop = 168;  // first menu row, pixels (kept well above the bottom edge: fingers land low)
+const int kRowH = 22;
 const int kHeaderH = 30;  // header bar height: touching it toggles the x10 step
 
 long long nowMs() {
@@ -195,10 +195,12 @@ void Ui::onTouch(const TouchEvent& e) {
         if (!e.repeat) fast_ = !fast_;
         return;
     }
-    if (e.y < kRowTop || e.y >= kRowTop + kRows * kRowH) return;
+    if (e.y < kRowTop) return;  // the camera picture between the header and the list
 
     std::vector<int> items = visibleItems(shared_.get().mode);
-    int row = firstRow() + (e.y - kRowTop) / kRowH;
+    // a tap below the list counts as a tap on its last row, down to the bottom edge
+    int rel = std::min((e.y - kRowTop) / kRowH, kRows - 1);
+    int row = firstRow() + rel;
     if (row < 0 || row >= (int)items.size()) return;
 
     if (isValueItem(items[row]) && (e.x < 60 || e.x > 180)) {  // the < and > ends of a value row
@@ -305,14 +307,11 @@ void Ui::renderScreen(cv::Mat& out, const Snapshot& snap) {
         if (on) shade(out, cv::Rect(0, y, 240, kRowH), pending ? cv::Scalar(30, 120, 220) : cv::Scalar(200, 110, 30), 0.85);
         cv::Scalar fg = on ? cv::Scalar(255, 255, 255) : cv::Scalar(225, 225, 225);
         if (isValueItem(items[i])) {
-            text(out, "<", 14, y + 15, 0.55, cv::Scalar(120, 210, 255), 2);
-            text(out, ">", 212, y + 15, 0.55, cv::Scalar(120, 210, 255), 2);
+            text(out, "<", 14, y + 16, 0.55, cv::Scalar(120, 210, 255), 2);
+            text(out, ">", 212, y + 16, 0.55, cv::Scalar(120, 210, 255), 2);
         }
-        text(out, itemText(items[i], s), 32, y + 15, 0.5, fg);
+        text(out, itemText(items[i], s), 32, y + 16, 0.5, fg);
     }
-    shade(out, cv::Rect(0, kRowTop + kRows * kRowH + 4, 240, 24), cv::Scalar(0, 0, 0), 0.6);
-    snprintf(b, sizeof(b), "found %d  (%.1f ms)", snap.count, snap.detectMs);
-    text(out, b, 66, 276, 0.42, cv::Scalar(190, 190, 190));
 }
 
 void Ui::render(cv::Mat& out, const Snapshot& snap) {
