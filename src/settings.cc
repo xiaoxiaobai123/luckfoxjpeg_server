@@ -14,6 +14,11 @@ void Settings::clamp() {
     roundness = clampInt(roundness, 5, 100);
     edge = clampInt(edge, 20, 255);
     exposure = clampInt(exposure, 0, 400);
+    gain = (gain <= 0) ? 0 : clampInt(gain, 10, 640);
+    roiW = clampInt(roiW, 32, 640);
+    roiH = clampInt(roiH, 32, 480);
+    roiX = clampInt(roiX, 0, 640 - roiW);
+    roiY = clampInt(roiY, 0, 480 - roiH);
 }
 
 bool Settings::load(const char* path) {
@@ -30,6 +35,11 @@ bool Settings::load(const char* path) {
         else if (!strcmp(key, "roundness")) roundness = v;
         else if (!strcmp(key, "edge")) edge = v;
         else if (!strcmp(key, "exposure")) exposure = v;
+        else if (!strcmp(key, "gain")) gain = v;
+        else if (!strcmp(key, "roi_x")) roiX = v;
+        else if (!strcmp(key, "roi_y")) roiY = v;
+        else if (!strcmp(key, "roi_w")) roiW = v;
+        else if (!strcmp(key, "roi_h")) roiH = v;
     }
     fclose(f);
     clamp();
@@ -41,8 +51,9 @@ bool Settings::save(const char* path) const {
     snprintf(tmp, sizeof(tmp), "%s.tmp", path);
     FILE* f = fopen(tmp, "w");
     if (!f) return false;
-    fprintf(f, "target=%d\nmin_dia=%d\nmax_dia=%d\nroundness=%d\nedge=%d\nexposure=%d\n",
-            target, minDia, maxDia, roundness, edge, exposure);
+    fprintf(f, "target=%d\nmin_dia=%d\nmax_dia=%d\nroundness=%d\nedge=%d\nexposure=%d\ngain=%d\n"
+               "roi_x=%d\nroi_y=%d\nroi_w=%d\nroi_h=%d\n",
+            target, minDia, maxDia, roundness, edge, exposure, gain, roiX, roiY, roiW, roiH);
     fflush(f);
     fsync(fileno(f));
     bool ok = (fclose(f) == 0);

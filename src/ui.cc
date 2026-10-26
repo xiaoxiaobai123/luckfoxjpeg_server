@@ -5,11 +5,13 @@
 #include <algorithm>
 #include <opencv2/imgproc/imgproc.hpp>
 
-static const int kItems = 8;
+static const int kItems = 13;
 static const int kRows = 4;      // menu lines visible at once
 static const int kRowTop = 184;  // first menu row, pixels
 static const int kRowH = 20;
-static const int kValueRows = 6; // rows 0..5 hold a value, 6 = save, 7 = discard
+static const int kValueRows = 11;  // rows 0..10 hold a value
+static const int kSaveRow = 11;
+static const int kDiscardRow = 12;
 
 static long long nowMs() {
     struct timespec t;
@@ -34,6 +36,14 @@ std::string Ui::itemText(int i, const Settings& s) const {
         else snprintf(b, sizeof(b), "Exposure  %.1f ms", s.exposure / 10.0);
         break;
     case 6:
+        if (s.gain == 0) snprintf(b, sizeof(b), "Gain      auto");
+        else snprintf(b, sizeof(b), "Gain      %.1fx", s.gain / 10.0);
+        break;
+    case 7: snprintf(b, sizeof(b), "Area x    %d", s.roiX); break;
+    case 8: snprintf(b, sizeof(b), "Area y    %d", s.roiY); break;
+    case 9: snprintf(b, sizeof(b), "Area wide %d", s.roiW); break;
+    case 10: snprintf(b, sizeof(b), "Area high %d", s.roiH); break;
+    case 11:
         if (saveConfirmUntil_ > nowMs()) snprintf(b, sizeof(b), "[ Again to SAVE ]");
         else snprintf(b, sizeof(b), "[ Save and exit ]");
         break;
@@ -67,6 +77,15 @@ void Ui::changeValue(int dir) {
     case 3: s.roundness += dir * step; break;
     case 4: s.edge += dir * step * 5; break;
     case 5: s.exposure += dir * step; break;
+    case 6:  // 0 = auto, otherwise 1.0x and up
+        if (s.gain == 0) s.gain = dir > 0 ? 10 : 0;
+        else if (dir < 0 && s.gain <= 10) s.gain = 0;
+        else s.gain += dir * step;
+        break;
+    case 7: s.roiX += dir * step * 8; break;
+    case 8: s.roiY += dir * step * 8; break;
+    case 9: s.roiW += dir * step * 8; break;
+    case 10: s.roiH += dir * step * 8; break;
     default: return;
     }
     shared_.set(s);
@@ -75,7 +94,7 @@ void Ui::changeValue(int dir) {
 // "OK" on the selected row. Saving needs two presses within three seconds so a stray key or a noisy
 // input cannot overwrite the saved settings by accident.
 void Ui::activate() {
-    if (sel_ == 6) {
+    if (sel_ == kSaveRow) {
         long long t = nowMs();
         if (saveConfirmUntil_ > t) {
             message_ = shared_.get().save(confPath_.c_str()) ? "Saved" : "Save FAILED";
@@ -85,7 +104,7 @@ void Ui::activate() {
         } else {
             saveConfirmUntil_ = t + 3000;
         }
-    } else if (sel_ == 7) {
+    } else if (sel_ == kDiscardRow) {
         shared_.set(backup_);
         message_ = "Changes discarded";
         messageUntil_ = nowMs() + 1500;
@@ -158,6 +177,13 @@ void Ui::render(cv::Mat& out, const Snapshot& snap) {
     Settings s = shared_.get();
     char b[64];
 
+    // detection area: only what is inside the frame is looked at (preview is 0.375 of the camera picture)
+    if (s.roiX != 0 || s.roiY != 0 || s.roiW != 640 || s.roiH != 480 || (menu_ && sel_ >= 7 && sel_ <= 10)) {
+        cv::Rect ra(cvRound(s.roiX * 0.375), cvRound(s.roiY * 0.375), cvRound(s.roiW * 0.375), cvRound(s.roiH * 0.375));
+        ra &= cv::Rect(0, 0, 240, 180);
+        cv::rectangle(out, ra, cv::Scalar(0, 200, 255), 1);
+    }
+
     if (!menu_) {
         const char* label = "--";
         cv::Scalar col(160, 160, 160);
@@ -186,7 +212,7 @@ void Ui::render(cv::Mat& out, const Snapshot& snap) {
         int i = first + row;
         int y = kRowTop + row * kRowH;
         bool on = (i == sel_);
-        bool pending = (i == 6 && saveConfirmUntil_ > nowMs());
+        bool pending = (i == kSaveRow && saveConfirmUntil_ > nowMs());
         if (on) cv::rectangle(out, cv::Rect(0, y, 240, kRowH), pending ? cv::Scalar(30, 120, 220) : cv::Scalar(160, 90, 20), -1);
         cv::Scalar fg = on ? cv::Scalar(255, 255, 255) : cv::Scalar(210, 210, 210);
         if (i < kValueRows) {

@@ -95,16 +95,26 @@ static void setOutputs(int ok, int ng, int err) {
 // detection
 // ---------------------------------------------------------------------------------------------
 
+// Circles are searched only inside the detection area (ROI); everything outside it is ignored.
+// The returned centres are in "work" pixels of the whole picture (camera pixels * 0.5), ROI offset included.
 static int countCircles(const cv::Mat& gray, const Settings& s, std::vector<cv::Vec3f>& circles) {
     double k = (double)WORK_W / gray.cols;  // camera pixels -> work pixels
     int minR = std::max(2, cvRound(s.minDia * 0.5 * k));
     int maxR = std::max(minR + 1, cvRound(s.maxDia * 0.5 * k));
+    cv::Rect roi(s.roiX, s.roiY, s.roiW, s.roiH);
+    roi &= cv::Rect(0, 0, gray.cols, gray.rows);
+    if (roi.width < 8 || roi.height < 8) roi = cv::Rect(0, 0, gray.cols, gray.rows);
     cv::Mat small;
-    cv::resize(gray, small, cv::Size(WORK_W, WORK_H), 0, 0, cv::INTER_AREA);
+    cv::resize(gray(roi), small, cv::Size(std::max(8, cvRound(roi.width * k)), std::max(8, cvRound(roi.height * k))),
+               0, 0, cv::INTER_AREA);
     cv::GaussianBlur(small, small, cv::Size(5, 5), 1.5);
     circles.clear();
     cv::HoughCircles(small, circles, cv::HOUGH_GRADIENT, 1.0, std::max(8, cvRound(minR * 1.5)),
                      s.edge, s.roundness, minR, maxR);
+    for (size_t i = 0; i < circles.size(); ++i) {
+        circles[i][0] += (float)(roi.x * k);
+        circles[i][1] += (float)(roi.y * k);
+    }
     return (int)circles.size();
 }
 
@@ -128,29 +138,27 @@ static void ispStop() {
     g_aiq = NULL;
 }
 
-static bool applyExposure(int x10) {
+// Fixed brightness: with a manual exposure time and/or sensor gain the picture no longer brightens up when the
+// scene is dark (which is what makes dark areas such as the inside of the housing show up). 0 = automatic.
+static bool applyExposure(int x10, int gain10) {
     if (!g_aiq) return false;
     Uapi_ExpSwAttrV2_t a{};
     XCamReturn r = rk_aiq_user_api2_ae_getExpSwAttr(g_aiq, &a);
     if (r != XCAM_RETURN_NO_ERROR && r != XCAM_RETURN_BYPASS) a.Enable = true;
     a.sync.sync_mode = RK_AIQ_UAPI_MODE_ASYNC;
     a.sync.done = false;
-    if (x10 <= 0) {
+    if (x10 <= 0 && gain10 <= 0) {
         a.AecOpType = RK_AIQ_OP_MODE_AUTO;
     } else {
         a.AecOpType = RK_AIQ_OP_MODE_MANUAL;
-        a.stManual.LinearAE.ManualTimeEn = true;
+        a.stManual.LinearAE.ManualTimeEn = x10 > 0;
         a.stManual.LinearAE.TimeValue = x10 / 10000.0f;  // seconds
-        a.stManual.LinearAE.ManualGainEn = false;
+        a.stManual.LinearAE.ManualGainEn = gain10 > 0;
+        a.stManual.LinearAE.GainValue = gain10 / 10.0f;
         a.stManual.LinearAE.ManualIspDgainEn = false;
     }
     XCamReturn rs = rk_aiq_user_api2_ae_setExpSwAttr(g_aiq, a);
-    usleep(300000);  // async: let the AE thread take it before reading back
-    Uapi_ExpSwAttrV2_t back{};
-    XCamReturn rb = rk_aiq_user_api2_ae_getExpSwAttr(g_aiq, &back);
-    printf("exposure %d (0.1ms): get=%d set=%d readback=%d mode=%d (1=auto 2=manual) time_en=%d time=%.5f s\n", x10,
-           (int)r, (int)rs, (int)rb, (int)back.AecOpType, (int)back.stManual.LinearAE.ManualTimeEn,
-           (double)back.stManual.LinearAE.TimeValue);
+    printf("exposure %d (0.1ms) gain %d (0.1x): set=%d\n", x10, gain10, (int)rs);
     fflush(stdout);
     return rs == XCAM_RETURN_NO_ERROR;
 }
@@ -401,7 +409,9 @@ int main(int argc, char** argv) {
         ispStop();
         return 1;
     }
-    // exposure is applied from the capture loop once frames are flowing
+    // Automatic white balance only makes the grey levels drift; this is a brightness-only job.
+    if (g_aiq) rk_aiq_uapi2_sysctl_setModuleCtl(g_aiq, RK_MODULE_AWB, false);
+    // exposure and gain are applied from the capture loop once frames are flowing
 
     if (g_p.webPort > 0) webStart(g_p.webPort);
     pthread_t trigTid = 0, uiTid = 0;
@@ -409,7 +419,7 @@ int main(int argc, char** argv) {
     pthread_create(&uiTid, NULL, uiThread, NULL);
     printf("ready: %s mode\n", g_p.continuous ? "continuous" : "PLC trigger");
 
-    int appliedExposure = -1;  // forces the first apply after the first frame
+    int appliedExposure = -1, appliedGain = -1;  // forces the first apply after the first frame
     int trig = 0;  // 0 idle, 2 = next frame is the one to measure
     int count = 0, result = -1;
     double detectMs = 0, fps = 0, fpsStart = nowMs();
@@ -431,9 +441,10 @@ int main(int argc, char** argv) {
         cv::Mat gray(CAP_HEIGHT, CAP_WIDTH, CV_8UC1, base, frame.stVFrame.u32VirWidth);
 
         Settings s = g_shared.get();
-        if (s.exposure != appliedExposure) {
-            applyExposure(s.exposure);
+        if (s.exposure != appliedExposure || s.gain != appliedGain) {
+            applyExposure(s.exposure, s.gain);
             appliedExposure = s.exposure;
+            appliedGain = s.gain;
         }
 
         // A trigger seen now may have arrived while this frame was exposing: skip it, measure the next.

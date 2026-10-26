@@ -11,6 +11,8 @@ struct Settings {
     int roundness = 25;   // Hough accumulator threshold: higher = only rounder circles
     int edge = 100;       // Canny high threshold: lower = more sensitive to weak edges
     int exposure = 0;     // exposure time in 0.1 ms units, 0 = auto
+    int gain = 0;         // sensor gain in 0.1x units, 0 = auto (fix both exposure and gain for a steady picture)
+    int roiX = 0, roiY = 0, roiW = 640, roiH = 480;  // detection area in camera pixels, the rest is ignored
 
     void clamp();
     bool load(const char* path);        // false if the file is missing or unreadable
