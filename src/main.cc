@@ -135,8 +135,10 @@ static int countDarkHoles(const cv::Mat& gray, const Settings& s, std::vector<cv
                0, 0, cv::INTER_AREA);
     cv::GaussianBlur(img, img, cv::Size(3, 3), 0);
 
-    int win = cvRound(s.maxDia * k * 2.0);  // averaging window, a bit wider than the biggest hole
-    win = std::min(151, std::max(15, win));
+    // averaging window: wider than the biggest hole, but never so wide that it reaches other bright or dark
+    // areas (a big dark plate must not count as "darker than its surroundings")
+    int win = cvRound(s.maxDia * k * 2.0);
+    win = std::min(61, std::max(15, win));
     if (win % 2 == 0) ++win;
     cv::Mat bg, diff, mask;
     cv::boxFilter(img, bg, -1, cv::Size(win, win), cv::Point(-1, -1), true, cv::BORDER_REPLICATE);
