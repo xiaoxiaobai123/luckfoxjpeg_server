@@ -51,6 +51,7 @@ static Gpio g_gpioKeys[6];
 static bool g_gpioFit[6];
 static int g_adcFd = -1;
 static bool g_useAdc = false;
+static bool g_activeLow = false;  // game pad: common wire on ground, 10k pull-ups, a pressed key reads 0
 static bool g_mixed = false;  // direct keys on GPIOs plus two keys (OK = 1k, ADJ = 3.3k) on the ADC
 
 static const Key kOrder[6] = {K_OK, K_UP, K_DOWN, K_LEFT, K_RIGHT, K_ADJ};
@@ -74,13 +75,15 @@ static Key classifyAdc(int raw) {
 static Key readRaw() {
     // keys wired straight to a GPIO (key between the pin and 3.3 V) come first
     for (int i = 0; i < 6; ++i)
-        if (g_gpioFit[i] && g_gpioKeys[i].read() == 1) return kOrder[i];
+        if (g_gpioFit[i] && g_gpioKeys[i].read() == (g_activeLow ? 0 : 1)) return kOrder[i];
     if (g_useAdc) {
         char buf[16] = {0};
         if (g_adcFd < 0) return K_NONE;
         ssize_t n = pread(g_adcFd, buf, sizeof(buf) - 1, 0);
         if (n <= 0) return K_NONE;
-        Key k = classifyAdc(atoi(buf));
+        int v = atoi(buf);
+        if (g_activeLow) return v < 400 ? K_OK : K_NONE;  // pad centre key: 10k pull-up to 1.8 V, key to ground
+        Key k = classifyAdc(v);
         if (g_mixed) {  // only two keys on the ladder: 1k reads ~93 (OK), 3.3k reads ~254 (ADJ)
             if (k == K_OK) return K_OK;
             if (k == K_UP) return K_ADJ;
@@ -119,7 +122,8 @@ static void* scanThread(void*) {
         // hold an arrow key to repeat
         if (stable == K_UP || stable == K_DOWN || stable == K_LEFT || stable == K_RIGHT) {
             long long t = nowMs();
-            if (t - pressedAt > 450 && t - lastRepeat > 90) {
+            long long held = t - pressedAt;
+            if (held > 450 && t - lastRepeat > (held > 1500 ? 35 : 90)) {  // faster the longer it is held
                 keysPush(stable);
                 lastRepeat = t;
             }
@@ -155,8 +159,9 @@ bool keysStartGpio(const int pins[6]) {
 
 // Mixed wiring: pins[] gives a GPIO for each of OK, UP, DOWN, LEFT, RIGHT, ADJ, or -1. The keys without a pin
 // (normally OK and ADJ) share the ADC ladder: OK through 1k, ADJ through 3.3k.
-bool keysStartMixed(const int pins[6], int channel) {
+bool keysStartMixed(const int pins[6], int channel, bool activeLow) {
     g_mixed = true;
+    g_activeLow = activeLow;
     bool any = false;
     for (int i = 0; i < 6; ++i) {
         g_gpioFit[i] = false;

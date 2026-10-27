@@ -659,6 +659,7 @@ int main(int argc, char** argv) {
     if (g_p.keyMode == "gpio") keysOk = keysStartGpio(g_p.keyPins);
     else if (g_p.keyMode == "adc") keysOk = keysStartAdc(g_p.adcChannel);
     else if (g_p.keyMode == "mixed") keysOk = keysStartMixed(g_p.keyPins, g_p.adcChannel);
+    else if (g_p.keyMode == "pad") keysOk = keysStartMixed(g_p.keyPins, g_p.adcChannel, true);
     printf("keys: %s (%s)\n", g_p.keyMode.c_str(), keysOk ? "ready" : "none");
 
     bool touchOk = !g_p.touchDev.empty() && touchStart(g_p.touchDev.c_str(), g_p.touchRst);

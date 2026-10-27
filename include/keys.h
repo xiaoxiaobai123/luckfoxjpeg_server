@@ -10,7 +10,8 @@ enum Key { K_NONE = 0, K_OK, K_UP, K_DOWN, K_LEFT, K_RIGHT, K_ADJ };
 //   order of pins: OK, UP, DOWN, LEFT, RIGHT, ADJ (-1 = not fitted)
 bool keysStartGpio(const int pins[6]);
 bool keysStartAdc(int channel);
-bool keysStartMixed(const int pins[6], int channel);  // GPIO keys plus OK/ADJ on the ADC
+bool keysStartMixed(const int pins[6], int channel, bool activeLow = false);  // GPIO keys plus OK (and ADJ) on the ADC
+// activeLow: game pad with the common wire on ground; arrows on GPIOs with pull-ups, OK on the ADC with a 10k pull-up
 void keysStop();
 
 // Queue shared by the hardware scanner and the browser simulator.
