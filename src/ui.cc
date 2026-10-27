@@ -315,6 +315,28 @@ void Ui::renderScreen(cv::Mat& out, const Snapshot& snap) {
 }
 
 void Ui::render(cv::Mat& out, const Snapshot& snap) {
+    if (snap.preview.empty()) {  // no camera picture: show the status message, centred and clear of the rounded corners
+        out.create(284, 240, CV_8UC3);
+        out.setTo(cv::Scalar(24, 24, 24));
+        std::string msg = snap.status.empty() ? "Starting..." : snap.status;
+        bool error = msg.find("NOT FOUND") != std::string::npos || msg.find("FAILED") != std::string::npos;
+        int y = 110;
+        size_t pos = 0;
+        while (pos <= msg.size()) {
+            size_t nl = msg.find('
+', pos);
+            std::string line = msg.substr(pos, nl == std::string::npos ? std::string::npos : nl - pos);
+            double scale = (y == 110) ? 0.62 : 0.5;
+            int base = 0;
+            cv::Size ts = cv::getTextSize(line, cv::FONT_HERSHEY_SIMPLEX, scale, 1, &base);
+            text(out, line, std::max(14, (240 - ts.width) / 2), y, scale,
+                 (y == 110) ? (error ? cv::Scalar(60, 60, 255) : cv::Scalar(0, 255, 255)) : cv::Scalar(220, 220, 220), 1);
+            y += 28;
+            if (nl == std::string::npos) break;
+            pos = nl + 1;
+        }
+        return;
+    }
     renderScreen(out, snap);
     // touch debugging: a magenta cross and ring where the controller reports the finger, kept for 1.5 s
     if (touchDebug_ && nowMs() - lastTouchAt_ < 1500 && lastTouchAt_ > 0) {

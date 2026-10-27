@@ -16,6 +16,7 @@
 #include <time.h>
 #include <sys/stat.h>
 #include <pthread.h>
+#include <dirent.h>
 #include <stdint.h>
 #include <string>
 #include <vector>
@@ -80,6 +81,52 @@ static pthread_mutex_t g_snapLock = PTHREAD_MUTEX_INITIALIZER;
 static rk_aiq_sys_ctx_t* g_aiq = NULL;
 
 static void onSignal(int) { g_run = false; }
+
+// A message for the LCD while there is no camera picture (start-up, or the camera is missing).
+static pthread_mutex_t g_statusLock = PTHREAD_MUTEX_INITIALIZER;
+static std::string g_status;
+
+static void setStatus(const std::string& s) {
+    pthread_mutex_lock(&g_statusLock);
+    g_status = s;
+    pthread_mutex_unlock(&g_statusLock);
+}
+
+static std::string getStatus() {
+    pthread_mutex_lock(&g_statusLock);
+    std::string s = g_status;
+    pthread_mutex_unlock(&g_statusLock);
+    return s;
+}
+
+// The camera sensor is detected by the kernel at boot: its driver binds to an I2C device. If the ribbon cable
+// is loose, the probe fails and no driver is bound. Starting the camera stack then crashes, so check first.
+// Returns false only when a known sensor device exists but none of them got a driver.
+static bool sensorPresent() {
+    static const char* names[] = {"sc3336", "sc4336", "sc530ai", "sc200ai", "sc231ai", "sc2336", "sc450ai",
+                                  "mia1321", "imx415", "imx327", "gc2093", "gc4653", "ov5647", "os04a10", NULL};
+    DIR* d = opendir("/sys/bus/i2c/devices");
+    if (!d) return true;  // cannot tell, try anyway
+    int bound = 0, unbound = 0;
+    struct dirent* e;
+    while ((e = readdir(d)) != NULL) {
+        if (e->d_name[0] == '.') continue;
+        std::string base = std::string("/sys/bus/i2c/devices/") + e->d_name;
+        FILE* f = fopen((base + "/name").c_str(), "r");
+        if (!f) continue;
+        char nm[64] = {0};
+        if (!fgets(nm, sizeof(nm), f)) nm[0] = 0;
+        fclose(f);
+        bool known = false;
+        for (int i = 0; names[i]; ++i)
+            if (strncmp(nm, names[i], strlen(names[i])) == 0) known = true;
+        if (!known) continue;
+        if (access((base + "/driver").c_str(), F_OK) == 0) ++bound;
+        else ++unbound;
+    }
+    closedir(d);
+    return !(bound == 0 && unbound > 0);
+}
 
 static double nowMs() {
     struct timespec t;
@@ -336,6 +383,7 @@ static void* uiThread(void*) {
         pthread_mutex_lock(&g_snapLock);
         snap = g_snap;
         pthread_mutex_unlock(&g_snapLock);
+        if (snap.preview.empty()) snap.status = getStatus();
         ui.render(frame, snap);
         if (haveLcd) disp.show(frame);
         if (webWantsUi()) webPublishUi(frame);
@@ -432,6 +480,20 @@ static Settings initialSettings() {
 // main
 // ---------------------------------------------------------------------------------------------
 
+// The camera cannot be used: tell the user on the LCD, raise the ERR output, and wait. Exiting would only make
+// the autostart script restart us every few seconds.
+static int holdError(const char* message, pthread_t uiTid) {
+    setStatus(message);
+    setOutputs(0, 0, 1);
+    while (g_run) usleep(200000);
+    if (uiTid) pthread_join(uiTid, NULL);
+    keysStop();
+    touchStop();
+    webStop();
+    setOutputs(0, 0, 0);
+    return 0;
+}
+
 int main(int argc, char** argv) {
     setvbuf(stdout, NULL, _IOLBF, 0);
     if (!parseArgs(argc, argv, g_p)) return 1;
@@ -465,25 +527,31 @@ int main(int argc, char** argv) {
     bool touchOk = !g_p.touchDev.empty() && touchStart(g_p.touchDev.c_str(), g_p.touchRst);
     printf("touch: %s\n", g_p.touchDev.empty() ? "off" : (touchOk ? "ready" : "not answering"));
 
+    // Bring the screen up first, so there is something to read even if the camera does not come up.
+    if (g_p.webPort > 0) webStart(g_p.webPort);
+    pthread_t trigTid = 0, uiTid = 0;
+    setStatus("Starting camera...");
+    pthread_create(&uiTid, NULL, uiThread, NULL);
+
+    if (!sensorPresent()) {
+        fprintf(stderr, "no camera sensor was detected at boot\n");
+        return holdError("CAMERA NOT FOUND\ncheck the ribbon cable,\nthen power-cycle", uiTid);
+    }
     if (!ispStart("/etc/iqfiles")) {
         fprintf(stderr, "ISP init failed\n");
-        setOutputs(0, 0, 1);
-        return 1;
+        return holdError("CAMERA INIT FAILED\npower-cycle the board", uiTid);
     }
     if (RK_MPI_SYS_Init() != RK_SUCCESS || vi_dev_init() != 0 || vi_chn_init(0, CAP_WIDTH, CAP_HEIGHT) != 0) {
         fprintf(stderr, "MPI/VI init failed\n");
-        setOutputs(0, 0, 1);
         ispStop();
-        return 1;
+        return holdError("CAMERA INIT FAILED\npower-cycle the board", uiTid);
     }
     // Automatic white balance only makes the grey levels drift; this is a brightness-only job.
     if (g_aiq) rk_aiq_uapi2_sysctl_setModuleCtl(g_aiq, RK_MODULE_AWB, false);
     // exposure and gain are applied from the capture loop once frames are flowing
 
-    if (g_p.webPort > 0) webStart(g_p.webPort);
-    pthread_t trigTid = 0, uiTid = 0;
+    setStatus("");
     if (!g_p.continuous) pthread_create(&trigTid, NULL, triggerThread, NULL);
-    pthread_create(&uiTid, NULL, uiThread, NULL);
     printf("ready: %s mode\n", g_p.continuous ? "continuous" : "PLC trigger");
 
     int appliedExposure = -1, appliedGain = -1;  // forces the first apply after the first frame

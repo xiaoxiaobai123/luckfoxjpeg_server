@@ -16,6 +16,7 @@ struct Snapshot {
     int result = -1;                 // -1 none yet, 0 NG, 1 OK, 2 error
     double fps = 0;
     double detectMs = 0;
+    std::string status;              // shown instead of the picture when there is none (start-up, camera missing)
 };
 
 // Run screen and settings menu for the 240x284 display.
