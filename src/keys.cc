@@ -55,12 +55,16 @@ static bool g_useAdc = false;
 static const Key kOrder[6] = {K_OK, K_UP, K_DOWN, K_LEFT, K_RIGHT, K_ADJ};
 
 // Resistor ladder: 10k pull-up to 1.8V, key resistors 1k/3.3k/6.8k/15k/33k/68k to ground.
-// Expected 10-bit counts: 93, 254, 413, 613, 785, 892; idle 1023. Thresholds are the midpoints.
+// Expected 10-bit counts for one key: 93, 254, 413, 613, 785, 892; idle 1023.
+// Two or more keys at once put their resistors in parallel, which only lowers the reading, so the key with the
+// smallest resistor wins (OK > UP > DOWN > LEFT > RIGHT > ADJ). The limits are set so that every combination
+// (two, three, four or five keys) lands in the band of that winning key, e.g. DOWN+LEFT reads 326 and must stay
+// DOWN, UP+DOWN+LEFT reads 166 and must stay UP. Use 1 % resistors: the margins are about 15 counts.
 static Key classifyAdc(int raw) {
-    if (raw < 170) return K_OK;
-    if (raw < 333) return K_UP;
-    if (raw < 513) return K_DOWN;
-    if (raw < 699) return K_LEFT;
+    if (raw < 140) return K_OK;
+    if (raw < 275) return K_UP;
+    if (raw < 470) return K_DOWN;
+    if (raw < 660) return K_LEFT;
     if (raw < 838) return K_RIGHT;
     if (raw < 957) return K_ADJ;
     return K_NONE;
