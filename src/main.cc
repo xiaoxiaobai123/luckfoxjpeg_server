@@ -55,6 +55,7 @@ struct Params {
     int adcChannel = 0;
     std::string touchDev;   // e.g. /dev/i2c-3 (CST816D at 0x15); empty = no touch
     int touchRst = -1;      // touch controller reset GPIO, -1 = none
+    std::string waitFile;   // wait for this file to exist before using the camera (the autostart script creates it)
     bool touchDebug = false;  // mark touches on the LCD and log their coordinates
     std::string spidev = "/dev/spidev0.0";
     int spiHz = 40000000;
@@ -434,6 +435,7 @@ static bool parseArgs(int argc, char** argv, Params& p) {
         else if (a == "--adc") p.adcChannel = atoi(v);
         else if (a == "--touch") p.touchDev = v;
         else if (a == "--touch-rst") p.touchRst = atoi(v);
+        else if (a == "--wait-file") p.waitFile = v;
         else if (a == "--touch-debug") p.touchDebug = (atoi(v) != 0);
         else if (a == "--target") p.oTarget = atoi(v);
         else if (a == "--mode") p.oMode = atoi(v);
@@ -536,6 +538,11 @@ int main(int argc, char** argv) {
     if (!sensorPresent()) {
         fprintf(stderr, "no camera sensor was detected at boot\n");
         return holdError("CAMERA NOT FOUND\ncheck the ribbon cable,\nthen power-cycle", uiTid);
+    }
+    // The stock camera app holds the camera until the autostart script has stopped it and creates this file.
+    // Waiting here (after the screen is up) keeps the screen from staying dark during that time.
+    if (!g_p.waitFile.empty()) {
+        for (int i = 0; i < 1500 && g_run && access(g_p.waitFile.c_str(), F_OK) != 0; ++i) usleep(100000);
     }
     if (!ispStart("/etc/iqfiles")) {
         fprintf(stderr, "ISP init failed\n");
