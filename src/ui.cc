@@ -323,8 +323,7 @@ void Ui::render(cv::Mat& out, const Snapshot& snap) {
         int y = 110;
         size_t pos = 0;
         while (pos <= msg.size()) {
-            size_t nl = msg.find('
-', pos);
+            size_t nl = msg.find('\n', pos);
             std::string line = msg.substr(pos, nl == std::string::npos ? std::string::npos : nl - pos);
             double scale = (y == 110) ? 0.62 : 0.5;
             int base = 0;
