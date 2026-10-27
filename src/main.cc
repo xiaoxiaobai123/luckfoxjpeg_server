@@ -644,6 +644,12 @@ int main(int argc, char** argv) {
     signal(SIGTERM, onSignal);
     g_shared.set(settings);
 
+    // The screen comes first: logo and a progress message as early as possible, then everything else is set up
+    // (and the camera, if it does not come up, is explained on the screen).
+    pthread_t trigTid = 0, uiTid = 0;
+    setStatus("Starting system");
+    pthread_create(&uiTid, NULL, uiThread, NULL);
+
     bool ioOk = g_ioOk.openOut(g_p.pinOk, 0) && g_ioNg.openOut(g_p.pinNg, 0) && g_ioErr.openOut(g_p.pinErr, 0);
     if (!g_p.continuous) ioOk = ioOk && g_ioTrigger.openIn(g_p.pinTrigger, "rising");
     if (!ioOk) fprintf(stderr, "WARNING: GPIO setup failed (check pin numbers)\n");
@@ -656,11 +662,7 @@ int main(int argc, char** argv) {
     bool touchOk = !g_p.touchDev.empty() && touchStart(g_p.touchDev.c_str(), g_p.touchRst);
     printf("touch: %s\n", g_p.touchDev.empty() ? "off" : (touchOk ? "ready" : "not answering"));
 
-    // Bring the screen up first, so there is something to read even if the camera does not come up.
     if (g_p.webPort > 0) webStart(g_p.webPort);
-    pthread_t trigTid = 0, uiTid = 0;
-    setStatus("Starting system");
-    pthread_create(&uiTid, NULL, uiThread, NULL);
 
     if (!sensorPresent()) {
         fprintf(stderr, "no camera sensor was detected at boot\n");

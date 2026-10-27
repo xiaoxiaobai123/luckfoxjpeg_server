@@ -61,17 +61,14 @@ bool Display::open(const char* spidev, int pinDc, int pinRst, int pinBl, int hz)
         return false;
     }
 
-    rst_.write(1);
-    usleep(10000);
+    // hardware reset (the line is already high from openOut); the panel needs 120 ms before "sleep out"
     rst_.write(0);
-    usleep(20000);
+    usleep(10000);
     rst_.write(1);
     usleep(120000);
 
-    command(0x01);          // software reset
-    usleep(120000);
-    command(0x11);          // sleep out
-    usleep(120000);
+    command(0x11);          // sleep out (a software reset on top of the hardware reset is not needed)
+    usleep(100000);
     const unsigned char colmod = 0x55;  // 16 bits per pixel
     commandData(0x3A, &colmod, 1);
     const unsigned char madctl = 0x00;  // RGB order, no rotation
