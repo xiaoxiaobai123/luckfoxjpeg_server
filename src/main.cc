@@ -77,6 +77,8 @@ static volatile bool g_menuOpen = false;
 static volatile int g_trigPending = 0;
 static volatile double g_trigAt = 0;  // time of the last trigger edge, ms
 static volatile int g_trigCount = 0;
+static volatile bool g_trigBusy = false;   // a trigger is being measured: further edges (contact bounce, noise) are ignored
+static volatile double g_lastDoneAt = 0;  // when the last result was put out, ms
 
 static Gpio g_ioTrigger, g_ioOk, g_ioNg, g_ioErr;
 
@@ -360,6 +362,8 @@ static void publishCamView(const cv::Mat& gray, const std::vector<cv::Vec3f>& ci
 static void* triggerThread(void*) {
     while (g_run) {
         if (g_ioTrigger.waitEdge(100) && !g_menuOpen) {
+            if ((g_trigBusy && nowMs() - g_trigAt < 2000) || nowMs() - g_lastDoneAt < 30) continue;  // bounce / noise right after an accepted edge
+            g_trigBusy = true;
             g_trigAt = nowMs();
             ++g_trigCount;
             setOutputs(0, 0, 0);
@@ -719,6 +723,8 @@ int main(int argc, char** argv) {
         if (RK_MPI_VI_GetChnFrame(0, 0, &frame, 500) != RK_SUCCESS) {
             if (trig == 2 || g_trigPending) {
                 result = 2;
+                g_trigBusy = false;
+                g_lastDoneAt = nowMs();
                 haveFrozen = false;  // show the error, not the last good measurement
                 setOutputs(0, 0, 1);
                 trig = 0;
@@ -753,6 +759,8 @@ int main(int argc, char** argv) {
             if (measure || g_p.continuous) {
                 result = (count == s.target) ? 1 : 0;
                 setOutputs(result == 1, result == 0, 0);
+                g_trigBusy = false;
+                g_lastDoneAt = nowMs();
                 static int lastPrinted = -2;
                 static double lastPrintMs = 0;
                 if (result != lastPrinted || !g_p.continuous || nowMs() - lastPrintMs > 2000) {  // the log lives in RAM
