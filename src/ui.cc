@@ -289,13 +289,8 @@ void Ui::renderScreen(cv::Mat& out, const Snapshot& snap) {
         else snprintf(b, sizeof(b), "%s", label);
         int base = 0;
         cv::Size ts = cv::getTextSize(b, cv::FONT_HERSHEY_SIMPLEX, 0.7, 2, &base);
-        shade(out, cv::Rect(30, 208, 180, snap.held && !snap.busy ? 46 : 32), cv::Scalar(0, 0, 0), 0.55);
+        shade(out, cv::Rect(30, 208, 180, 32), cv::Scalar(0, 0, 0), 0.55);
         text(out, b, (240 - ts.width) / 2, 232, 0.7, cv::Scalar(255, 255, 255), 2);
-        if (snap.held && !snap.busy) {  // proof that a trigger arrived: its number and the time to the result
-            snprintf(b, sizeof(b), "#%d   %.0f ms", snap.trigNo, snap.totalMs);
-            cv::Size cs = cv::getTextSize(b, cv::FONT_HERSHEY_SIMPLEX, 0.5, 1, &base);
-            text(out, b, (240 - cs.width) / 2, 249, 0.5, cv::Scalar(225, 225, 225));
-        }
         if (!snap.held) {  // hint only until the first trigger
             text(out, touchAvailable_ ? "tap or OK for menu" : "press OK for menu", touchAvailable_ ? 46 : 50, 252, 0.42,
                  cv::Scalar(215, 215, 215));
