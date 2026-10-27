@@ -273,7 +273,8 @@ void Ui::renderScreen(cv::Mat& out, const Snapshot& snap) {
         text(out, b, 108, 232, 0.5, cv::Scalar(240, 240, 240));
         snprintf(b, sizeof(b), "%.0ffps %.1fms", snap.fps, snap.detectMs);
         text(out, b, 108, 252, 0.45, cv::Scalar(190, 190, 190));
-        text(out, "tap or OK for menu", 46, 274, 0.42, cv::Scalar(170, 170, 170));
+        text(out, touchAvailable_ ? "tap or OK for menu" : "press OK for menu", touchAvailable_ ? 46 : 50, 274, 0.42,
+             cv::Scalar(170, 170, 170));
         if (nowMs() < messageUntil_) {
             shade(out, cv::Rect(0, 150, 240, 30), cv::Scalar(0, 0, 0), 0.75);
             text(out, message_, 18, 172, 0.7, cv::Scalar(0, 255, 255), 2);

@@ -10,6 +10,7 @@ enum Key { K_NONE = 0, K_OK, K_UP, K_DOWN, K_LEFT, K_RIGHT, K_ADJ };
 //   order of pins: OK, UP, DOWN, LEFT, RIGHT, ADJ (-1 = not fitted)
 bool keysStartGpio(const int pins[6]);
 bool keysStartAdc(int channel);
+bool keysStartMixed(const int pins[6], int channel);  // GPIO keys plus OK/ADJ on the ADC
 void keysStop();
 
 // Queue shared by the hardware scanner and the browser simulator.

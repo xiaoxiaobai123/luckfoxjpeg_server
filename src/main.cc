@@ -364,6 +364,7 @@ static void* triggerThread(void*) {
 static void* uiThread(void*) {
     Ui ui(g_shared, g_p.conf);
     ui.setTouchDebug(g_p.touchDebug);
+    ui.setTouchAvailable(!g_p.touchDev.empty());  // without a touch panel the hints talk about keys
     Display disp;
     bool haveLcd = false;
     if (!g_p.noScreen) {
@@ -657,6 +658,7 @@ int main(int argc, char** argv) {
     bool keysOk = false;
     if (g_p.keyMode == "gpio") keysOk = keysStartGpio(g_p.keyPins);
     else if (g_p.keyMode == "adc") keysOk = keysStartAdc(g_p.adcChannel);
+    else if (g_p.keyMode == "mixed") keysOk = keysStartMixed(g_p.keyPins, g_p.adcChannel);
     printf("keys: %s (%s)\n", g_p.keyMode.c_str(), keysOk ? "ready" : "none");
 
     bool touchOk = !g_p.touchDev.empty() && touchStart(g_p.touchDev.c_str(), g_p.touchRst);

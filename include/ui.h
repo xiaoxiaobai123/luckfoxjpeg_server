@@ -31,6 +31,7 @@ public:
     void onKey(Key k);
     void onTouch(const TouchEvent& e);
     bool menuOpen() const { return menu_; }
+    void setTouchAvailable(bool on) { touchAvailable_ = on; }  // false: show key hints instead of tap hints
     void setTouchDebug(bool on) { touchDebug_ = on; }  // draw a marker where the touch controller says the finger is
     void render(cv::Mat& out, const Snapshot& snap);  // out becomes 240x284 BGR
 
@@ -52,6 +53,7 @@ private:
     long long messageUntil_;
     long long saveConfirmUntil_;
     bool touchDebug_ = false;
+    bool touchAvailable_ = true;
     int lastTouchX_ = 0, lastTouchY_ = 0;
     long long lastTouchAt_ = 0;
 };
