@@ -16,9 +16,9 @@ enum Item {
     IT_SAVE, IT_DISCARD
 };
 
-const int kRows = 4;      // menu lines visible at once
-const int kRowTop = 168;  // first menu row, pixels (kept well above the bottom edge: fingers land low)
-const int kRowH = 22;
+const int kRows = 3;      // menu lines visible at once
+const int kRowTop = 164;  // first menu row, pixels (kept well above the bottom edge: fingers land low)
+const int kRowH = 28;
 const int kHeaderH = 30;  // header bar height: touching it toggles the x10 step
 
 long long nowMs() {
@@ -63,7 +63,7 @@ Ui::Ui(SharedSettings& shared, const std::string& confPath)
 std::string Ui::itemText(int id, const Settings& s) const {
     char b[48];
     switch (id) {
-    case IT_MODE: snprintf(b, sizeof(b), "Mode      %s", s.mode == 1 ? "Dark hole" : "Circle"); break;
+    case IT_MODE: snprintf(b, sizeof(b), "Mode      %s", s.mode == 1 ? "Dark" : "Circle"); break;
     case IT_TARGET: snprintf(b, sizeof(b), "Count     %d", s.target); break;
     case IT_MINDIA: snprintf(b, sizeof(b), "Min dia   %d px", s.minDia); break;
     case IT_MAXDIA: snprintf(b, sizeof(b), "Max dia   %d px", s.maxDia); break;
@@ -323,10 +323,10 @@ void Ui::renderScreen(cv::Mat& out, const Snapshot& snap) {
         if (on) shade(out, cv::Rect(0, y, 240, kRowH), pending ? cv::Scalar(30, 120, 220) : cv::Scalar(200, 110, 30), 0.85);
         cv::Scalar fg = on ? cv::Scalar(255, 255, 255) : cv::Scalar(225, 225, 225);
         if (on && isValueItem(items[i])) {  // - and + only on the selected row
-            text(out, "-", 12, y + 17, 0.75, cv::Scalar(120, 210, 255), 2);
-            text(out, "+", 208, y + 17, 0.75, cv::Scalar(120, 210, 255), 2);
+            text(out, "-", 12, y + 21, 0.85, cv::Scalar(120, 210, 255), 2);
+            text(out, "+", 206, y + 21, 0.85, cv::Scalar(120, 210, 255), 2);
         }
-        text(out, itemText(items[i], s), 32, y + 16, 0.5, fg);
+        text(out, itemText(items[i], s), 32, y + 19, 0.5, fg);
     }
 }
 
