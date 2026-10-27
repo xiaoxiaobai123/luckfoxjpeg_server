@@ -264,20 +264,31 @@ void Ui::renderScreen(cv::Mat& out, const Snapshot& snap) {
     }
 
     if (!menu_) {
-        const char* label = "--";
-        cv::Scalar col(190, 190, 190);
-        if (snap.result == 1) { label = "OK"; col = cv::Scalar(60, 230, 60); }
-        else if (snap.result == 0) { label = "NG"; col = cv::Scalar(70, 70, 255); }
-        else if (snap.result == 2) { label = "ERR"; col = cv::Scalar(0, 150, 255); }
-        // the LCD has rounded corners: keep everything about 16 px away from the left, right and bottom edges
-        // clean result screen: big verdict and the count, nothing else (the hint is only there before the first trigger)
-        shade(out, cv::Rect(0, 206, 240, 78), cv::Scalar(0, 0, 0), 0.6);
-        text(out, label, 18, 250, 2.0, col, 4);
-        snprintf(b, sizeof(b), "found %d/%d", snap.count, s.target);
-        text(out, b, 108, 244, 0.55, cv::Scalar(240, 240, 240));
-        if (!snap.held)
-            text(out, touchAvailable_ ? "tap or OK for menu" : "press OK for menu", touchAvailable_ ? 46 : 50, 274, 0.42,
-                 cv::Scalar(170, 170, 170));
+        // clean result screen: one solid bar at the top, blue = front (OK), red = back (NG); the picture stays clear.
+        // The LCD has rounded corners, so the bar is inset from the edges.
+        const char* label = "READY";
+        cv::Scalar col(110, 110, 110);
+        if (snap.result == 1) { label = "OK"; col = cv::Scalar(200, 110, 30); }
+        else if (snap.result == 0) { label = "NG"; col = cv::Scalar(40, 40, 200); }
+        else if (snap.result == 2) { label = "ERR"; col = cv::Scalar(0, 140, 240); }
+        cv::Rect bar(14, 10, 212, 44);
+        cv::rectangle(out, bar, col, -1);
+        int base = 0;
+        cv::Size ts = cv::getTextSize(label, cv::FONT_HERSHEY_SIMPLEX, 1.3, 3, &base);
+        bool haveCount = snap.result == 0 || snap.result == 1;
+        int lx = haveCount ? bar.x + 16 : bar.x + (bar.width - ts.width) / 2;
+        text(out, label, lx, bar.y + (bar.height + ts.height) / 2, 1.3, cv::Scalar(255, 255, 255), 3);
+        if (haveCount) {
+            snprintf(b, sizeof(b), "%d/%d", snap.count, s.target);
+            cv::Size cs = cv::getTextSize(b, cv::FONT_HERSHEY_SIMPLEX, 0.8, 2, &base);
+            text(out, b, bar.x + bar.width - 16 - cs.width, bar.y + (bar.height + cs.height) / 2, 0.8,
+                 cv::Scalar(255, 255, 255), 2);
+        }
+        if (!snap.held) {  // hint only until the first trigger
+            shade(out, cv::Rect(0, 252, 240, 32), cv::Scalar(0, 0, 0), 0.55);
+            text(out, touchAvailable_ ? "tap or OK for menu" : "press OK for menu", touchAvailable_ ? 46 : 50, 272, 0.42,
+                 cv::Scalar(200, 200, 200));
+        }
         if (nowMs() < messageUntil_) {
             shade(out, cv::Rect(0, 150, 240, 30), cv::Scalar(0, 0, 0), 0.75);
             text(out, message_, 18, 172, 0.7, cv::Scalar(0, 255, 255), 2);
