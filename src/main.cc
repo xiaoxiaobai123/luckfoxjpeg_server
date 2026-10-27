@@ -561,6 +561,8 @@ static void recordCameraFailure(const char* why, int attempt) {
     snprintf(head, sizeof(head), "=== camera problem: %s | %.0f s after power-on | automatic restarts so far: %d ===\n",
              why, uptimeSeconds(), attempt);
     std::string rec = head;
+    rec += "-- sensor probe result at boot (the key lines)\n";
+    rec += shellOut("dmesg | grep -iE 'Unexpected sensor id|Detected|No link|reset-gpios' | head -n 14");
     rec += "-- kernel messages about the camera\n";
     rec += shellOut("dmesg | grep -iE 'sc3336|sc4336|sc530ai|dphy|rkcif|csi2|sensor' | tail -n 20");
     rec += "-- I2C buses and a scan of the camera bus\n";
