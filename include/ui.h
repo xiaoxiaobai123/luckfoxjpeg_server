@@ -16,6 +16,9 @@ struct Snapshot {
     int result = -1;                 // -1 none yet, 0 NG, 1 OK, 2 error
     double fps = 0;
     double detectMs = 0;
+    double totalMs = 0;              // from the PLC trigger edge to the result
+    int trigNo = 0;                  // number of the trigger (counts up, shows that a trigger really arrived)
+    bool busy = false;               // a trigger has arrived, the result is not there yet
     bool held = false;               // frozen picture of the last PLC-triggered measurement (not live)
     std::string status;              // shown instead of the picture when there is none (start-up, camera missing)
 };
