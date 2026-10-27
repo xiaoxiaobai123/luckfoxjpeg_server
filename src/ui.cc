@@ -228,6 +228,21 @@ static void shade(cv::Mat& img, const cv::Rect& r, const cv::Scalar& color, doub
     cv::addWeighted(fill, alpha, part, 1.0 - alpha, 0.0, part);
 }
 
+// Outline that follows the rounded corners of the LCD, drawn at the very edge of the screen.
+static void roundBorder(cv::Mat& img, const cv::Scalar& color, int thick) {
+    const int rad = 26;
+    int w = img.cols, h = img.rows, m = thick / 2;  // centre line of the stroke
+    int x0 = m, y0 = m, x1 = w - 1 - m, y1 = h - 1 - m;
+    cv::line(img, cv::Point(x0 + rad, y0), cv::Point(x1 - rad, y0), color, thick, cv::LINE_AA);
+    cv::line(img, cv::Point(x0 + rad, y1), cv::Point(x1 - rad, y1), color, thick, cv::LINE_AA);
+    cv::line(img, cv::Point(x0, y0 + rad), cv::Point(x0, y1 - rad), color, thick, cv::LINE_AA);
+    cv::line(img, cv::Point(x1, y0 + rad), cv::Point(x1, y1 - rad), color, thick, cv::LINE_AA);
+    cv::ellipse(img, cv::Point(x0 + rad, y0 + rad), cv::Size(rad, rad), 0, 180, 270, color, thick, cv::LINE_AA);
+    cv::ellipse(img, cv::Point(x1 - rad, y0 + rad), cv::Size(rad, rad), 0, 270, 360, color, thick, cv::LINE_AA);
+    cv::ellipse(img, cv::Point(x0 + rad, y1 - rad), cv::Size(rad, rad), 0, 90, 180, color, thick, cv::LINE_AA);
+    cv::ellipse(img, cv::Point(x1 - rad, y1 - rad), cv::Size(rad, rad), 0, 0, 90, color, thick, cv::LINE_AA);
+}
+
 // The camera picture fills the whole screen; the menu and results are laid over it. The picture is scaled to the
 // screen height, so it is wider than the screen: the visible window follows the detection area.
 void Ui::renderScreen(cv::Mat& out, const Snapshot& snap) {
@@ -259,36 +274,31 @@ void Ui::renderScreen(cv::Mat& out, const Snapshot& snap) {
     }
 
     if (!menu_) {
-        // clean result screen: one solid bar at the top, blue = front (OK), red = back (NG); the picture stays clear.
-        // The rounded corners of the LCD cut the bar's corners; the text stays well inside.
+        // clean result screen: the verdict is the colour of an outline around the whole screen (blue = front/OK,
+        // red = back/NG, yellow = measuring, grey = nothing yet), plus a small text low on the screen.
         const char* label = "READY";
-        cv::Scalar col(110, 110, 110);
-        if (snap.result == 1) { label = "OK"; col = cv::Scalar(200, 110, 30); }
-        else if (snap.result == 0) { label = "NG"; col = cv::Scalar(40, 40, 200); }
+        cv::Scalar col(120, 120, 120);
+        if (snap.result == 1) { label = "OK"; col = cv::Scalar(230, 130, 30); }
+        else if (snap.result == 0) { label = "NG"; col = cv::Scalar(40, 40, 230); }
         else if (snap.result == 2) { label = "ERR"; col = cv::Scalar(0, 140, 240); }
-        if (snap.busy) { label = "..."; col = cv::Scalar(110, 110, 110); }
-        cv::Rect bar(0, 0, 240, 56);  // flush with the top, left and right edges
-        cv::rectangle(out, bar, col, -1);
-        int base = 0;
-        cv::Size ts = cv::getTextSize(label, cv::FONT_HERSHEY_SIMPLEX, 1.3, 3, &base);
+        if (snap.busy) { label = "..."; col = cv::Scalar(0, 220, 255); }
+        roundBorder(out, col, snap.result >= 0 || snap.busy ? 7 : 3);
+
         bool haveCount = (snap.result == 0 || snap.result == 1) && !snap.busy;
-        int lx = haveCount ? bar.x + 26 : bar.x + (bar.width - ts.width) / 2;
-        text(out, label, lx, bar.y + (bar.height + ts.height) / 2, 1.3, cv::Scalar(255, 255, 255), 3);
-        if (haveCount) {
-            snprintf(b, sizeof(b), "%d/%d", snap.count, s.target);
-            cv::Size cs = cv::getTextSize(b, cv::FONT_HERSHEY_SIMPLEX, 0.8, 2, &base);
-            text(out, b, bar.x + bar.width - 26 - cs.width, bar.y + (bar.height + cs.height) / 2, 0.8,
-                 cv::Scalar(255, 255, 255), 2);
-        }
+        if (haveCount) snprintf(b, sizeof(b), "%s  %d/%d", label, snap.count, s.target);
+        else snprintf(b, sizeof(b), "%s", label);
+        int base = 0;
+        cv::Size ts = cv::getTextSize(b, cv::FONT_HERSHEY_SIMPLEX, 0.7, 2, &base);
+        shade(out, cv::Rect(30, 208, 180, snap.held && !snap.busy ? 46 : 32), cv::Scalar(0, 0, 0), 0.55);
+        text(out, b, (240 - ts.width) / 2, 232, 0.7, cv::Scalar(255, 255, 255), 2);
         if (snap.held && !snap.busy) {  // proof that a trigger arrived: its number and the time to the result
             snprintf(b, sizeof(b), "#%d   %.0f ms", snap.trigNo, snap.totalMs);
-            shade(out, cv::Rect(0, 56, 240, 22), cv::Scalar(0, 0, 0), 0.55);
-            text(out, b, 60, 72, 0.5, cv::Scalar(235, 235, 235));
+            cv::Size cs = cv::getTextSize(b, cv::FONT_HERSHEY_SIMPLEX, 0.5, 1, &base);
+            text(out, b, (240 - cs.width) / 2, 249, 0.5, cv::Scalar(225, 225, 225));
         }
         if (!snap.held) {  // hint only until the first trigger
-            shade(out, cv::Rect(0, 252, 240, 32), cv::Scalar(0, 0, 0), 0.55);
-            text(out, touchAvailable_ ? "tap or OK for menu" : "press OK for menu", touchAvailable_ ? 46 : 50, 272, 0.42,
-                 cv::Scalar(200, 200, 200));
+            text(out, touchAvailable_ ? "tap or OK for menu" : "press OK for menu", touchAvailable_ ? 46 : 50, 252, 0.42,
+                 cv::Scalar(215, 215, 215));
         }
         if (nowMs() < messageUntil_) {
             shade(out, cv::Rect(0, 150, 240, 30), cv::Scalar(0, 0, 0), 0.75);
