@@ -75,6 +75,8 @@ static SharedSettings g_shared;
 static volatile bool g_run = true;
 static volatile bool g_menuOpen = false;
 static volatile int g_trigPending = 0;
+static volatile double g_trigAt = 0;  // time of the last trigger edge, ms
+static volatile int g_trigCount = 0;
 
 static Gpio g_ioTrigger, g_ioOk, g_ioNg, g_ioErr;
 
@@ -358,6 +360,8 @@ static void publishCamView(const cv::Mat& gray, const std::vector<cv::Vec3f>& ci
 static void* triggerThread(void*) {
     while (g_run) {
         if (g_ioTrigger.waitEdge(100) && !g_menuOpen) {
+            g_trigAt = nowMs();
+            ++g_trigCount;
             setOutputs(0, 0, 0);
             g_trigPending = 1;
         }
@@ -780,13 +784,22 @@ int main(int argc, char** argv) {
         snap.fps = fps;
         snap.detectMs = detectMs;
         // After a PLC trigger the screen keeps the measured picture until the next trigger; the menu shows live video.
+        snap.trigNo = g_trigCount;
         if (measure && !g_p.continuous) {
+            snap.totalMs = nowMs() - g_trigAt;
             frozen = snap;
             frozen.held = true;
             haveFrozen = true;
         }
         pthread_mutex_lock(&g_snapLock);
-        g_snap = (haveFrozen && !g_menuOpen && !g_p.continuous) ? frozen : snap;
+        if (!g_p.continuous && !measure && (trig == 2 || g_trigPending)) {  // trigger seen, result still to come
+            Snapshot waiting = haveFrozen ? frozen : snap;
+            waiting.busy = true;
+            waiting.trigNo = g_trigCount;
+            g_snap = g_menuOpen ? snap : waiting;
+        } else {
+            g_snap = (haveFrozen && !g_menuOpen && !g_p.continuous) ? frozen : snap;
+        }
         pthread_mutex_unlock(&g_snapLock);
 
         if (webWantsCam()) publishCamView(gray, circles, count, result, fps, detectMs);

@@ -266,11 +266,12 @@ void Ui::renderScreen(cv::Mat& out, const Snapshot& snap) {
         if (snap.result == 1) { label = "OK"; col = cv::Scalar(200, 110, 30); }
         else if (snap.result == 0) { label = "NG"; col = cv::Scalar(40, 40, 200); }
         else if (snap.result == 2) { label = "ERR"; col = cv::Scalar(0, 140, 240); }
+        if (snap.busy) { label = "..."; col = cv::Scalar(110, 110, 110); }
         cv::Rect bar(0, 0, 240, 56);  // flush with the top, left and right edges
         cv::rectangle(out, bar, col, -1);
         int base = 0;
         cv::Size ts = cv::getTextSize(label, cv::FONT_HERSHEY_SIMPLEX, 1.3, 3, &base);
-        bool haveCount = snap.result == 0 || snap.result == 1;
+        bool haveCount = (snap.result == 0 || snap.result == 1) && !snap.busy;
         int lx = haveCount ? bar.x + 26 : bar.x + (bar.width - ts.width) / 2;
         text(out, label, lx, bar.y + (bar.height + ts.height) / 2, 1.3, cv::Scalar(255, 255, 255), 3);
         if (haveCount) {
@@ -278,6 +279,11 @@ void Ui::renderScreen(cv::Mat& out, const Snapshot& snap) {
             cv::Size cs = cv::getTextSize(b, cv::FONT_HERSHEY_SIMPLEX, 0.8, 2, &base);
             text(out, b, bar.x + bar.width - 26 - cs.width, bar.y + (bar.height + cs.height) / 2, 0.8,
                  cv::Scalar(255, 255, 255), 2);
+        }
+        if (snap.held && !snap.busy) {  // proof that a trigger arrived: its number and the time to the result
+            snprintf(b, sizeof(b), "#%d   %.0f ms", snap.trigNo, snap.totalMs);
+            shade(out, cv::Rect(0, 56, 240, 22), cv::Scalar(0, 0, 0), 0.55);
+            text(out, b, 60, 72, 0.5, cv::Scalar(235, 235, 235));
         }
         if (!snap.held) {  // hint only until the first trigger
             shade(out, cv::Rect(0, 252, 240, 32), cv::Scalar(0, 0, 0), 0.55);
