@@ -17,7 +17,7 @@ enum Item {
 };
 
 const int kRows = 3;      // menu lines visible at once
-const int kRowTop = 164;  // first menu row, pixels (kept well above the bottom edge: fingers land low)
+const int kRowTop = 284 - kRows * 28;  // the list sits on the bottom edge of the screen
 const int kRowH = 28;
 const int kHeaderH = 30;  // header bar height: touching it toggles the x10 step
 
@@ -93,13 +93,8 @@ std::string Ui::itemText(int id, const Settings& s) const {
 }
 
 int Ui::firstRow() const {
-    // the highlight moves down the list; the list itself only scrolls when the highlight reaches its top or bottom row
-    int n = (int)visibleItems(shared_.get().mode).size();
-    if (sel_ < top_) top_ = sel_;
-    if (sel_ >= top_ + kRows) top_ = sel_ - kRows + 1;
-    if (top_ > n - kRows) top_ = n - kRows;
-    if (top_ < 0) top_ = 0;
-    return top_;
+    // wheel: the selected row stays in the middle of the window, the list turns around it (and wraps round)
+    return sel_ - kRows / 2;
 }
 
 void Ui::enterMenu() {
@@ -204,8 +199,8 @@ void Ui::onTouch(const TouchEvent& e) {
     std::vector<int> items = visibleItems(shared_.get().mode);
     // a tap below the list counts as a tap on its last row, down to the bottom edge
     int rel = std::min((e.y - kRowTop) / kRowH, kRows - 1);
-    int row = firstRow() + rel;
-    if (row < 0 || row >= (int)items.size()) return;
+    int n = (int)items.size();
+    int row = ((firstRow() + rel) % n + n) % n;
 
     if (isValueItem(items[row]) && (e.x < 60 || e.x > 180)) {  // the < and > ends of a value row
         if (sel_ != row) saveConfirmUntil_ = 0;
@@ -265,23 +260,23 @@ void Ui::renderScreen(cv::Mat& out, const Snapshot& snap) {
 
     if (!menu_) {
         // clean result screen: one solid bar at the top, blue = front (OK), red = back (NG); the picture stays clear.
-        // The LCD has rounded corners, so the bar is inset from the edges.
+        // The rounded corners of the LCD cut the bar's corners; the text stays well inside.
         const char* label = "READY";
         cv::Scalar col(110, 110, 110);
         if (snap.result == 1) { label = "OK"; col = cv::Scalar(200, 110, 30); }
         else if (snap.result == 0) { label = "NG"; col = cv::Scalar(40, 40, 200); }
         else if (snap.result == 2) { label = "ERR"; col = cv::Scalar(0, 140, 240); }
-        cv::Rect bar(14, 10, 212, 44);
+        cv::Rect bar(0, 0, 240, 56);  // flush with the top, left and right edges
         cv::rectangle(out, bar, col, -1);
         int base = 0;
         cv::Size ts = cv::getTextSize(label, cv::FONT_HERSHEY_SIMPLEX, 1.3, 3, &base);
         bool haveCount = snap.result == 0 || snap.result == 1;
-        int lx = haveCount ? bar.x + 16 : bar.x + (bar.width - ts.width) / 2;
+        int lx = haveCount ? bar.x + 26 : bar.x + (bar.width - ts.width) / 2;
         text(out, label, lx, bar.y + (bar.height + ts.height) / 2, 1.3, cv::Scalar(255, 255, 255), 3);
         if (haveCount) {
             snprintf(b, sizeof(b), "%d/%d", snap.count, s.target);
             cv::Size cs = cv::getTextSize(b, cv::FONT_HERSHEY_SIMPLEX, 0.8, 2, &base);
-            text(out, b, bar.x + bar.width - 16 - cs.width, bar.y + (bar.height + cs.height) / 2, 0.8,
+            text(out, b, bar.x + bar.width - 26 - cs.width, bar.y + (bar.height + cs.height) / 2, 0.8,
                  cv::Scalar(255, 255, 255), 2);
         }
         if (!snap.held) {  // hint only until the first trigger
@@ -315,8 +310,8 @@ void Ui::renderScreen(cv::Mat& out, const Snapshot& snap) {
     shade(out, cv::Rect(0, kRowTop - 2, 240, kRows * kRowH + 4), cv::Scalar(0, 0, 0), 0.62);
     int first = firstRow();
     for (int row = 0; row < kRows; ++row) {
-        int i = first + row;
-        if (i >= (int)items.size()) break;
+        int n = (int)items.size();
+        int i = ((first + row) % n + n) % n;
         int y = kRowTop + row * kRowH;
         bool on = (i == sel_);
         bool pending = (items[i] == IT_SAVE && saveConfirmUntil_ > nowMs());
