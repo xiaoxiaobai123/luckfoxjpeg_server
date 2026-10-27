@@ -56,6 +56,7 @@ struct Params {
     std::string touchDev;   // e.g. /dev/i2c-3 (CST816D at 0x15); empty = no touch
     int touchRst = -1;      // touch controller reset GPIO, -1 = none
     std::string waitFile;   // wait for this file to exist before using the camera (the autostart script creates it)
+    int autoRestart = 0;    // camera not found at boot: restart the board by itself up to this many times (0 = never)
     bool touchDebug = false;  // mark touches on the LCD and log their coordinates
     std::string spidev = "/dev/spidev0.0";
     int spiHz = 40000000;
@@ -436,6 +437,7 @@ static bool parseArgs(int argc, char** argv, Params& p) {
         else if (a == "--touch") p.touchDev = v;
         else if (a == "--touch-rst") p.touchRst = atoi(v);
         else if (a == "--wait-file") p.waitFile = v;
+        else if (a == "--auto-restart") p.autoRestart = atoi(v);
         else if (a == "--touch-debug") p.touchDebug = (atoi(v) != 0);
         else if (a == "--target") p.oTarget = atoi(v);
         else if (a == "--mode") p.oMode = atoi(v);
@@ -496,6 +498,116 @@ static int holdError(const char* message, pthread_t uiTid) {
     return 0;
 }
 
+// ---- camera problem at boot: restart automatically a few times, keep a record of what the board looked like ----
+// The kernel looks for the sensor once, at boot. If it is not answering then (ribbon cable contact, power ramp), the
+// picture can only come back with a reboot, so the board restarts itself up to --auto-restart times. The counter and
+// the record live in /userdata so they survive the restart; the counter is cleared as soon as the camera works.
+static const char* kRetryFile = "/userdata/camera_retries";
+static const char* kFailLog = "/userdata/camera_fail.log";
+
+static std::string shellOut(const char* cmd) {
+    std::string out;
+    FILE* p = popen(cmd, "r");
+    if (!p) return out;
+    char buf[256];
+    while (out.size() < 6000 && fgets(buf, sizeof(buf), p)) out += buf;
+    pclose(p);
+    return out;
+}
+
+static int readRetryCount() {
+    int n = 0;
+    FILE* f = fopen(kRetryFile, "r");
+    if (f) {
+        if (fscanf(f, "%d", &n) != 1) n = 0;
+        fclose(f);
+    }
+    return n;
+}
+
+static void writeRetryCount(int n) {
+    FILE* f = fopen(kRetryFile, "w");
+    if (f) {
+        fprintf(f, "%d\n", n);
+        fflush(f);
+        fsync(fileno(f));
+        fclose(f);
+    }
+}
+
+static double uptimeSeconds() {
+    double up = 0;
+    FILE* f = fopen("/proc/uptime", "r");
+    if (f) {
+        if (fscanf(f, "%lf", &up) != 1) up = 0;
+        fclose(f);
+    }
+    return up;
+}
+
+static void appendFailLog(const std::string& text) {
+    struct stat st;
+    if (stat(kFailLog, &st) == 0 && st.st_size > 24000) unlink(kFailLog);  // keep the flash file small
+    FILE* f = fopen(kFailLog, "a");
+    if (!f) return;
+    fputs(text.c_str(), f);
+    fflush(f);
+    fsync(fileno(f));
+    fclose(f);
+}
+
+static void recordCameraFailure(const char* why, int attempt) {
+    char head[160];
+    snprintf(head, sizeof(head), "=== camera problem: %s | %.0f s after power-on | automatic restarts so far: %d ===\n",
+             why, uptimeSeconds(), attempt);
+    std::string rec = head;
+    rec += "-- kernel messages about the camera\n";
+    rec += shellOut("dmesg | grep -iE 'sc3336|sc4336|sc530ai|dphy|rkcif|csi2|sensor' | tail -n 20");
+    rec += "-- I2C buses and a scan of the camera bus\n";
+    rec += shellOut("i2cdetect -l 2>&1 | head -8; i2cdetect -y 4 2>&1 | head -10");
+    rec += "-- sensor devices and their drivers\n";
+    rec += shellOut("for d in /sys/bus/i2c/devices/4-*; do echo \"$(basename $d) $(cat $d/name 2>/dev/null) driver=$(basename $(readlink $d/driver 2>/dev/null) 2>/dev/null)\"; done");
+    rec += "-- USB / power related kernel messages, load, temperature\n";
+    rec += shellOut("dmesg | grep -iE 'usb|dwc3|power|volt' | tail -n 6; cat /proc/loadavg; "
+                    "echo \"temp $(cat /sys/class/thermal/thermal_zone0/temp)\"");
+    rec += "\n";
+    appendFailLog(rec);
+}
+
+// Called when the camera did not come up. Returns main()'s exit code.
+static int cameraProblem(const char* why, bool notFound, pthread_t uiTid) {
+    int tries = readRetryCount();
+    recordCameraFailure(why, tries);
+    if (g_p.autoRestart > 0 && tries < g_p.autoRestart) {
+        writeRetryCount(tries + 1);
+        char msg[120];
+        snprintf(msg, sizeof(msg), "CAMERA %s\nrestarting automatically\n(%d of %d)", notFound ? "NOT FOUND" : "FAILED",
+                 tries + 1, g_p.autoRestart);
+        setStatus(msg);
+        setOutputs(0, 0, 1);
+        for (int i = 0; i < 50 && g_run; ++i) usleep(100000);  // five seconds, long enough to read
+        sync();
+        if (system("reboot") != 0) fprintf(stderr, "reboot command failed\n");
+        while (g_run) usleep(200000);  // the reboot takes over
+        return 0;
+    }
+    if (notFound) return holdError("CAMERA NOT FOUND\ncheck the ribbon cable,\nthen power-cycle", uiTid);
+    return holdError("CAMERA INIT FAILED\npower-cycle the board", uiTid);
+}
+
+// The camera works: forget earlier failures and note that the restart helped.
+static void cameraOk() {
+    int n = readRetryCount();
+    if (access(kRetryFile, F_OK) != 0) return;
+    unlink(kRetryFile);
+    if (n > 0) {
+        char line[120];
+        snprintf(line, sizeof(line), "=== camera recovered after %d automatic restart(s), %.0f s after power-on ===\n\n", n,
+                 uptimeSeconds());
+        appendFailLog(line);
+    }
+}
+
 int main(int argc, char** argv) {
     setvbuf(stdout, NULL, _IOLBF, 0);
     if (!parseArgs(argc, argv, g_p)) return 1;
@@ -537,7 +649,7 @@ int main(int argc, char** argv) {
 
     if (!sensorPresent()) {
         fprintf(stderr, "no camera sensor was detected at boot\n");
-        return holdError("CAMERA NOT FOUND\ncheck the ribbon cable,\nthen power-cycle", uiTid);
+        return cameraProblem("sensor not detected at boot", true, uiTid);
     }
     // The stock camera app holds the camera until the autostart script has stopped it and creates this file.
     // Waiting here (after the screen is up) keeps the screen from staying dark during that time.
@@ -548,13 +660,14 @@ int main(int argc, char** argv) {
     setStatus("Starting camera");
     if (!ispStart("/etc/iqfiles")) {
         fprintf(stderr, "ISP init failed\n");
-        return holdError("CAMERA INIT FAILED\npower-cycle the board", uiTid);
+        return cameraProblem("ISP init failed", false, uiTid);
     }
     if (RK_MPI_SYS_Init() != RK_SUCCESS || vi_dev_init() != 0 || vi_chn_init(0, CAP_WIDTH, CAP_HEIGHT) != 0) {
         fprintf(stderr, "MPI/VI init failed\n");
         ispStop();
-        return holdError("CAMERA INIT FAILED\npower-cycle the board", uiTid);
+        return cameraProblem("MPI/VI init failed", false, uiTid);
     }
+    cameraOk();  // the camera is up: clear the restart counter
     // Automatic white balance only makes the grey levels drift; this is a brightness-only job.
     if (g_aiq) rk_aiq_uapi2_sysctl_setModuleCtl(g_aiq, RK_MODULE_AWB, false);
     // exposure and gain are applied from the capture loop once frames are flowing
