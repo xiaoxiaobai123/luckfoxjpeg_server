@@ -137,6 +137,11 @@ static double nowMs() {
 }
 
 static void setOutputs(int ok, int ng, int err) {
+    if (g_p.pinErr < 0) {  // no separate error line: error = OK and NG both high
+        g_ioOk.write(ok || err);
+        g_ioNg.write(ng || err);
+        return;
+    }
     g_ioOk.write(ok);
     g_ioNg.write(ng);
     g_ioErr.write(err);
@@ -419,7 +424,7 @@ static void printUsage() {
            "  --continuous            detect on every frame, ignore the PLC trigger (bench use)\n"
            "  --web PORT              bench page: camera, LCD picture and keys in a browser\n"
            "  --image FILE            run the detector on a picture and exit (no camera)\n"
-           "  --pins T,OK,NG,ERR      trigger input and result outputs (GPIO numbers)\n"
+           "  --pins T,OK,NG,ERR      trigger input and result outputs (GPIO numbers, ERR -1 = error is OK+NG both high)\n"
            "  --lcd DC,RST,BL         LCD control pins (BL -1 = backlight wired to 3.3V)\n"
            "  --spi DEV               LCD SPI device (default /dev/spidev0.0)\n"
            "  --touch DEV             touch controller I2C bus, e.g. /dev/i2c-3   --touch-rst N  its reset GPIO\n"
@@ -651,7 +656,7 @@ int main(int argc, char** argv) {
     setStatus("Starting system");
     pthread_create(&uiTid, NULL, uiThread, NULL);
 
-    bool ioOk = g_ioOk.openOut(g_p.pinOk, 0) && g_ioNg.openOut(g_p.pinNg, 0) && g_ioErr.openOut(g_p.pinErr, 0);
+    bool ioOk = g_ioOk.openOut(g_p.pinOk, 0) && g_ioNg.openOut(g_p.pinNg, 0) && (g_p.pinErr < 0 || g_ioErr.openOut(g_p.pinErr, 0));
     if (!g_p.continuous) ioOk = ioOk && g_ioTrigger.openIn(g_p.pinTrigger, "rising");
     if (!ioOk) fprintf(stderr, "WARNING: GPIO setup failed (check pin numbers)\n");
 

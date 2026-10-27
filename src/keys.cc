@@ -171,11 +171,13 @@ bool keysStartMixed(const int pins[6], int channel, bool activeLow) {
             any = true;
         }
     }
-    g_useAdc = true;
-    char path[96];
-    snprintf(path, sizeof(path), "/sys/bus/iio/devices/iio:device0/in_voltage%d_raw", channel);
-    g_adcFd = open(path, O_RDONLY);
-    if (g_adcFd >= 0) any = true;
+    if (channel >= 0) {  // channel -1: all keys are on GPIOs
+        g_useAdc = true;
+        char path[96];
+        snprintf(path, sizeof(path), "/sys/bus/iio/devices/iio:device0/in_voltage%d_raw", channel);
+        g_adcFd = open(path, O_RDONLY);
+        if (g_adcFd >= 0) any = true;
+    }
     return any && startThread();
 }
 
