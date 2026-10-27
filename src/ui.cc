@@ -284,15 +284,20 @@ void Ui::renderScreen(cv::Mat& out, const Snapshot& snap) {
         if (snap.busy) { label = "..."; col = cv::Scalar(0, 220, 255); }
         roundBorder(out, col, snap.result >= 0 || snap.busy ? 7 : 3);
 
+        // verdict word at the lower left, count at the lower right, both centred on one line just above the outline
         bool haveCount = (snap.result == 0 || snap.result == 1) && !snap.busy;
-        if (haveCount) snprintf(b, sizeof(b), "%s  %d/%d", label, snap.count, s.target);
-        else snprintf(b, sizeof(b), "%s", label);
+        const int cy = 255;
         int base = 0;
-        cv::Size ts = cv::getTextSize(b, cv::FONT_HERSHEY_SIMPLEX, 0.7, 2, &base);
-        shade(out, cv::Rect(30, 208, 180, 32), cv::Scalar(0, 0, 0), 0.55);
-        text(out, b, (240 - ts.width) / 2, 232, 0.7, cv::Scalar(255, 255, 255), 2);
+        shade(out, cv::Rect(14, cy - 21, 212, 42), cv::Scalar(0, 0, 0), 0.55);
+        cv::Size ts = cv::getTextSize(label, cv::FONT_HERSHEY_SIMPLEX, 0.9, 2, &base);
+        text(out, label, 28, cy + ts.height / 2, 0.9, cv::Scalar(255, 255, 255), 2);
+        if (haveCount) {
+            snprintf(b, sizeof(b), "%d/%d", snap.count, s.target);
+            cv::Size cs = cv::getTextSize(b, cv::FONT_HERSHEY_SIMPLEX, 0.55, 1, &base);
+            text(out, b, 212 - cs.width, cy + cs.height / 2, 0.55, cv::Scalar(235, 235, 235), 1);
+        }
         if (!snap.held) {  // hint only until the first trigger
-            text(out, touchAvailable_ ? "tap or OK for menu" : "press OK for menu", touchAvailable_ ? 46 : 50, 252, 0.42,
+            text(out, touchAvailable_ ? "tap or OK for menu" : "press OK for menu", touchAvailable_ ? 46 : 50, 228, 0.42,
                  cv::Scalar(215, 215, 215));
         }
         if (nowMs() < messageUntil_) {
