@@ -54,6 +54,14 @@ public:
 
 private:
     bool setup(int pin, const char* dir) {
+        for (int attempt = 0; attempt < 5; ++attempt) {  // a pin can fail to export right at boot, try again
+            if (setupOnce(pin, dir)) return true;
+            usleep(100000);
+        }
+        return false;
+    }
+
+    bool setupOnce(int pin, const char* dir) {
         pin_ = pin;
         char path[64];
         snprintf(path, sizeof(path), "/sys/class/gpio/gpio%d", pin);
