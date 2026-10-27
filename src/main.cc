@@ -707,12 +707,15 @@ int main(int argc, char** argv) {
     double detectMs = 0, fps = 0, fpsStart = nowMs();
     int fpsFrames = 0;
     std::vector<cv::Vec3f> circles;
+    Snapshot frozen;
+    bool haveFrozen = false;
 
     while (g_run) {
         VIDEO_FRAME_INFO_S frame;
         if (RK_MPI_VI_GetChnFrame(0, 0, &frame, 500) != RK_SUCCESS) {
             if (trig == 2 || g_trigPending) {
                 result = 2;
+                haveFrozen = false;  // show the error, not the last good measurement
                 setOutputs(0, 0, 1);
                 trig = 0;
                 g_trigPending = 0;
@@ -776,8 +779,14 @@ int main(int argc, char** argv) {
         snap.result = result;
         snap.fps = fps;
         snap.detectMs = detectMs;
+        // After a PLC trigger the screen keeps the measured picture until the next trigger; the menu shows live video.
+        if (measure && !g_p.continuous) {
+            frozen = snap;
+            frozen.held = true;
+            haveFrozen = true;
+        }
         pthread_mutex_lock(&g_snapLock);
-        g_snap = snap;
+        g_snap = (haveFrozen && !g_menuOpen && !g_p.continuous) ? frozen : snap;
         pthread_mutex_unlock(&g_snapLock);
 
         if (webWantsCam()) publishCamView(gray, circles, count, result, fps, detectMs);

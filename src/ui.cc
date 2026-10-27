@@ -93,16 +93,19 @@ std::string Ui::itemText(int id, const Settings& s) const {
 }
 
 int Ui::firstRow() const {
+    // the highlight moves down the list; the list itself only scrolls when the highlight reaches its top or bottom row
     int n = (int)visibleItems(shared_.get().mode).size();
-    int first = sel_ - kRows / 2;
-    if (first < 0) first = 0;
-    if (first > n - kRows) first = n - kRows;
-    return first;
+    if (sel_ < top_) top_ = sel_;
+    if (sel_ >= top_ + kRows) top_ = sel_ - kRows + 1;
+    if (top_ > n - kRows) top_ = n - kRows;
+    if (top_ < 0) top_ = 0;
+    return top_;
 }
 
 void Ui::enterMenu() {
     menu_ = true;
     sel_ = 0;
+    top_ = 0;
     fast_ = false;
     saveConfirmUntil_ = 0;
     backup_ = shared_.get();
@@ -267,14 +270,14 @@ void Ui::renderScreen(cv::Mat& out, const Snapshot& snap) {
         else if (snap.result == 0) { label = "NG"; col = cv::Scalar(70, 70, 255); }
         else if (snap.result == 2) { label = "ERR"; col = cv::Scalar(0, 150, 255); }
         // the LCD has rounded corners: keep everything about 16 px away from the left, right and bottom edges
+        // clean result screen: big verdict and the count, nothing else (the hint is only there before the first trigger)
         shade(out, cv::Rect(0, 206, 240, 78), cv::Scalar(0, 0, 0), 0.6);
         text(out, label, 18, 250, 2.0, col, 4);
         snprintf(b, sizeof(b), "found %d/%d", snap.count, s.target);
-        text(out, b, 108, 232, 0.5, cv::Scalar(240, 240, 240));
-        snprintf(b, sizeof(b), "%.0ffps %.1fms", snap.fps, snap.detectMs);
-        text(out, b, 108, 252, 0.45, cv::Scalar(190, 190, 190));
-        text(out, touchAvailable_ ? "tap or OK for menu" : "press OK for menu", touchAvailable_ ? 46 : 50, 274, 0.42,
-             cv::Scalar(170, 170, 170));
+        text(out, b, 108, 244, 0.55, cv::Scalar(240, 240, 240));
+        if (!snap.held)
+            text(out, touchAvailable_ ? "tap or OK for menu" : "press OK for menu", touchAvailable_ ? 46 : 50, 274, 0.42,
+                 cv::Scalar(170, 170, 170));
         if (nowMs() < messageUntil_) {
             shade(out, cv::Rect(0, 150, 240, 30), cv::Scalar(0, 0, 0), 0.75);
             text(out, message_, 18, 172, 0.7, cv::Scalar(0, 255, 255), 2);
@@ -308,9 +311,9 @@ void Ui::renderScreen(cv::Mat& out, const Snapshot& snap) {
         bool pending = (items[i] == IT_SAVE && saveConfirmUntil_ > nowMs());
         if (on) shade(out, cv::Rect(0, y, 240, kRowH), pending ? cv::Scalar(30, 120, 220) : cv::Scalar(200, 110, 30), 0.85);
         cv::Scalar fg = on ? cv::Scalar(255, 255, 255) : cv::Scalar(225, 225, 225);
-        if (isValueItem(items[i])) {
-            text(out, "<", 14, y + 16, 0.55, cv::Scalar(120, 210, 255), 2);
-            text(out, ">", 212, y + 16, 0.55, cv::Scalar(120, 210, 255), 2);
+        if (on && isValueItem(items[i])) {  // - and + only on the selected row
+            text(out, "-", 12, y + 17, 0.75, cv::Scalar(120, 210, 255), 2);
+            text(out, "+", 208, y + 17, 0.75, cv::Scalar(120, 210, 255), 2);
         }
         text(out, itemText(items[i], s), 32, y + 16, 0.5, fg);
     }

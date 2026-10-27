@@ -16,6 +16,7 @@ struct Snapshot {
     int result = -1;                 // -1 none yet, 0 NG, 1 OK, 2 error
     double fps = 0;
     double detectMs = 0;
+    bool held = false;               // frozen picture of the last PLC-triggered measurement (not live)
     std::string status;              // shown instead of the picture when there is none (start-up, camera missing)
 };
 
@@ -47,6 +48,7 @@ private:
     std::string confPath_;
     bool menu_;
     int sel_;
+    mutable int top_ = 0;  // first menu row on screen
     bool fast_;
     Settings backup_;
     std::string message_;
