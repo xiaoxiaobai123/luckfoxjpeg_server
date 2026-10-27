@@ -49,6 +49,7 @@ bool keysPushByName(const std::string& n) {
 
 static Gpio g_gpioKeys[6];
 static bool g_gpioFit[6];
+static int g_gpioPin[6] = {-1, -1, -1, -1, -1, -1};  // wanted pins, retried by the scan thread if opening failed
 static int g_adcFd = -1;
 static bool g_useAdc = false;
 static bool g_activeLow = false;  // game pad: common wire on ground, 10k pull-ups, a pressed key reads 0
@@ -103,8 +104,14 @@ static long long nowMs() {
 static void* scanThread(void*) {
     Key stable = K_NONE, candidate = K_NONE;
     int same = 0;
-    long long pressedAt = 0, lastRepeat = 0;
+    long long pressedAt = 0, lastRepeat = 0, lastRetry = 0;
     while (g_scan) {
+        long long now = nowMs();
+        if (now - lastRetry > 1000) {  // a key pin that was busy at start-up (boot) is picked up later
+            lastRetry = now;
+            for (int i = 0; i < 6; ++i)
+                if (g_gpioPin[i] >= 0 && !g_gpioFit[i] && g_gpioKeys[i].openIn(g_gpioPin[i], "none")) g_gpioFit[i] = true;
+        }
         Key raw = readRaw();
         if (raw == candidate) {
             if (same < 100) ++same;
@@ -148,6 +155,7 @@ bool keysStartGpio(const int pins[6]) {
     bool any = false;
     for (int i = 0; i < 6; ++i) {
         g_gpioFit[i] = false;
+        g_gpioPin[i] = pins[i];
         if (pins[i] < 0) continue;
         if (g_gpioKeys[i].openIn(pins[i], "none")) {
             g_gpioFit[i] = true;
@@ -165,6 +173,7 @@ bool keysStartMixed(const int pins[6], int channel, bool activeLow) {
     bool any = false;
     for (int i = 0; i < 6; ++i) {
         g_gpioFit[i] = false;
+        g_gpioPin[i] = pins[i];
         if (pins[i] < 0) continue;
         if (g_gpioKeys[i].openIn(pins[i], "none")) {
             g_gpioFit[i] = true;
