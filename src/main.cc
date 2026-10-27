@@ -368,8 +368,15 @@ static void* uiThread(void*) {
     bool haveLcd = false;
     if (!g_p.noScreen) {
         haveLcd = disp.open(g_p.spidev.c_str(), g_p.pinDc, g_p.pinRst, g_p.pinBl, g_p.spiHz);
-        printf("lcd: %s\n", haveLcd ? "ready" : "not available (no spidev? bench page still works)");
+        double up = 0;
+        FILE* uf = fopen("/proc/uptime", "r");
+        if (uf) {
+            if (fscanf(uf, "%lf", &up) != 1) up = 0;
+            fclose(uf);
+        }
+        printf("lcd: %s (%.1f s after power-on)\n", haveLcd ? "ready" : "not available (no spidev? bench page still works)", up);
     }
+    bool backlightOn = false;
     cv::Mat frame;
     while (g_run) {
         double t0 = nowMs();
@@ -387,7 +394,13 @@ static void* uiThread(void*) {
         pthread_mutex_unlock(&g_snapLock);
         if (snap.preview.empty()) snap.status = getStatus();
         ui.render(frame, snap);
-        if (haveLcd) disp.show(frame);
+        if (haveLcd) {
+            disp.show(frame);
+            if (!backlightOn) {  // light up only once the first picture is in the panel
+                disp.backlight(true);
+                backlightOn = true;
+            }
+        }
         if (webWantsUi()) webPublishUi(frame);
         double spent = nowMs() - t0;
         if (spent < 33) usleep((useconds_t)((33 - spent) * 1000));

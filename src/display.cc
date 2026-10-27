@@ -81,7 +81,7 @@ bool Display::open(const char* spidev, int pinDc, int pinRst, int pinBl, int hz)
     usleep(20000);
 
     buf_.resize((size_t)W * H * 2);
-    bl_.write(1);
+    // the backlight is switched on by the caller after the first picture is in the panel (no flash of old content)
     return true;
 }
 
