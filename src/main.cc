@@ -363,6 +363,8 @@ static void* triggerThread(void*) {
     while (g_run) {
         if (g_ioTrigger.waitEdge(100) && !g_menuOpen) {
             if ((g_trigBusy && nowMs() - g_trigAt < 2000) || nowMs() - g_lastDoneAt < 30) continue;  // bounce / noise right after an accepted edge
+            usleep(3000);  // a real trigger is still high a few ms later; a noise spike on a floating pin is not
+            if (g_ioTrigger.read() != 1) continue;
             g_trigBusy = true;
             g_trigAt = nowMs();
             ++g_trigCount;
