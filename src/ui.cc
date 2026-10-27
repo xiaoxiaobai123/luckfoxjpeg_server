@@ -325,7 +325,7 @@ void Ui::renderScreen(cv::Mat& out, const Snapshot& snap) {
             cv::line(out, cv::Point(206, cy), cv::Point(220, cy), sign, 3, cv::LINE_AA);
             cv::line(out, cv::Point(213, cy - 7), cv::Point(213, cy + 7), sign, 3, cv::LINE_AA);
         }
-        text(out, itemText(items[i], s), 32, y + 19, 0.5, fg);
+        text(out, itemText(items[i], s), 32, y + 24, 0.5, fg);
     }
 }
 
