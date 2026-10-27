@@ -318,8 +318,12 @@ void Ui::renderScreen(cv::Mat& out, const Snapshot& snap) {
         if (on) shade(out, cv::Rect(0, y, 240, kRowH), pending ? cv::Scalar(30, 120, 220) : cv::Scalar(200, 110, 30), 0.85);
         cv::Scalar fg = on ? cv::Scalar(255, 255, 255) : cv::Scalar(225, 225, 225);
         if (on && isValueItem(items[i])) {  // - and + only on the selected row
-            text(out, "-", 12, y + 21, 0.85, cv::Scalar(120, 210, 255), 2);
-            text(out, "+", 206, y + 21, 0.85, cv::Scalar(120, 210, 255), 2);
+            // drawn as lines so they sit exactly in the middle of the row
+            const cv::Scalar sign(120, 210, 255);
+            int cy = y + kRowH / 2;
+            cv::line(out, cv::Point(10, cy), cv::Point(24, cy), sign, 3, cv::LINE_AA);
+            cv::line(out, cv::Point(206, cy), cv::Point(220, cy), sign, 3, cv::LINE_AA);
+            cv::line(out, cv::Point(213, cy - 7), cv::Point(213, cy + 7), sign, 3, cv::LINE_AA);
         }
         text(out, itemText(items[i], s), 32, y + 19, 0.5, fg);
     }
