@@ -1,4 +1,5 @@
 #include "ui.h"
+#include "logo.h"
 
 #include <stdio.h>
 #include <time.h>
@@ -315,22 +316,34 @@ void Ui::renderScreen(cv::Mat& out, const Snapshot& snap) {
 }
 
 void Ui::render(cv::Mat& out, const Snapshot& snap) {
-    if (snap.preview.empty()) {  // no camera picture: show the status message, centred and clear of the rounded corners
+    if (snap.preview.empty()) {  // no camera picture yet: logo and a status message on a white screen
         out.create(284, 240, CV_8UC3);
-        out.setTo(cv::Scalar(24, 24, 24));
-        std::string msg = snap.status.empty() ? "Starting..." : snap.status;
+        out.setTo(cv::Scalar(255, 255, 255));
+        // logo, centred in the upper part (the LCD has rounded corners, so nothing sits near the edges)
+        cv::Mat logo(kLogoH, kLogoW, CV_8UC3, const_cast<unsigned char*>(kLogoBgr));
+        logo.copyTo(out(cv::Rect((240 - kLogoW) / 2, 62, kLogoW, kLogoH)));
+
+        std::string msg = snap.status.empty() ? "Starting" : snap.status;
         bool error = msg.find("NOT FOUND") != std::string::npos || msg.find("FAILED") != std::string::npos;
-        int y = 110;
+        // animated dots after a plain "Starting ..." message, so it is clear the system is alive
+        bool animate = !error && msg.size() > 0 && msg[msg.size() - 1] != '.';
+        if (animate) msg += std::string((nowMs() / 450) % 4, '.');
+
+        const cv::Scalar blue(148, 83, 11), grey(90, 90, 90), red(40, 40, 220);
+        int y = 190;
         size_t pos = 0;
         while (pos <= msg.size()) {
             size_t nl = msg.find('\n', pos);
             std::string line = msg.substr(pos, nl == std::string::npos ? std::string::npos : nl - pos);
-            double scale = (y == 110) ? 0.62 : 0.5;
+            bool first = (y == 190);
+            double scale = first ? 0.62 : 0.48;
             int base = 0;
-            cv::Size ts = cv::getTextSize(line, cv::FONT_HERSHEY_SIMPLEX, scale, 1, &base);
-            text(out, line, std::max(14, (240 - ts.width) / 2), y, scale,
-                 (y == 110) ? (error ? cv::Scalar(60, 60, 255) : cv::Scalar(0, 255, 255)) : cv::Scalar(220, 220, 220), 1);
-            y += 28;
+            // measure without the animated dots so the text does not wobble sideways
+            std::string measure = line;
+            while (animate && first && !measure.empty() && measure[measure.size() - 1] == '.') measure.erase(measure.size() - 1);
+            cv::Size ts = cv::getTextSize(measure + (animate && first ? "..." : ""), cv::FONT_HERSHEY_SIMPLEX, scale, 1, &base);
+            text(out, line, std::max(14, (240 - ts.width) / 2), y, scale, first ? (error ? red : blue) : grey, 1);
+            y += 26;
             if (nl == std::string::npos) break;
             pos = nl + 1;
         }

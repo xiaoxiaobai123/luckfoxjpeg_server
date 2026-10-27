@@ -532,7 +532,7 @@ int main(int argc, char** argv) {
     // Bring the screen up first, so there is something to read even if the camera does not come up.
     if (g_p.webPort > 0) webStart(g_p.webPort);
     pthread_t trigTid = 0, uiTid = 0;
-    setStatus("Starting camera...");
+    setStatus("Starting system");
     pthread_create(&uiTid, NULL, uiThread, NULL);
 
     if (!sensorPresent()) {
@@ -542,8 +542,10 @@ int main(int argc, char** argv) {
     // The stock camera app holds the camera until the autostart script has stopped it and creates this file.
     // Waiting here (after the screen is up) keeps the screen from staying dark during that time.
     if (!g_p.waitFile.empty()) {
+        setStatus("Preparing camera");
         for (int i = 0; i < 1500 && g_run && access(g_p.waitFile.c_str(), F_OK) != 0; ++i) usleep(100000);
     }
+    setStatus("Starting camera");
     if (!ispStart("/etc/iqfiles")) {
         fprintf(stderr, "ISP init failed\n");
         return holdError("CAMERA INIT FAILED\npower-cycle the board", uiTid);
