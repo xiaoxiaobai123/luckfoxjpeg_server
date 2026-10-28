@@ -405,11 +405,16 @@ void Ui::renderScreen(cv::Mat& out, const Snapshot& snap) {
         const bool zh = s.lang == 1;
         std::string label = zh ? "就绪" : "READY";
         cv::Scalar col(120, 120, 120), tcol(235, 235, 235);
-        if (snap.result == 1) { label = "OK"; col = cv::Scalar(230, 130, 30); tcol = cv::Scalar(255, 165, 50); }
+        if (snap.result == 1) { label = "OK"; col = cv::Scalar(60, 200, 60); tcol = cv::Scalar(100, 235, 100); }
         else if (snap.result == 0) { label = "NG"; col = cv::Scalar(40, 40, 230); tcol = cv::Scalar(90, 90, 255); }
         else if (snap.result == 2) { label = zh ? "错误" : "ERR"; col = cv::Scalar(0, 140, 240); tcol = cv::Scalar(0, 175, 255); }
-        if (snap.busy) { label = "..."; col = cv::Scalar(0, 220, 255); tcol = col; }
-        roundBorder(out, col, snap.result >= 0 || snap.busy ? 7 : 3);
+        if (snap.busy) { label = "..."; col = cv::Scalar(120, 120, 120); tcol = cv::Scalar(0, 220, 255); }
+        roundBorder(out, col, snap.result >= 0 && !snap.busy ? 7 : 3);
+        if (snap.busy) {  // trigger received, measuring: a camera-aperture ring in the middle of the screen
+            const cv::Point mid(120, 142);
+            cv::circle(out, mid, 44, cv::Scalar(0, 220, 255), 6, cv::LINE_AA);
+            cv::circle(out, mid, 26, cv::Scalar(0, 220, 255), 2, cv::LINE_AA);
+        }
 
         bool haveCount = (snap.result == 0 || snap.result == 1) && !snap.busy;
         const int cy = 250;  // both on one line, a little above the outline
