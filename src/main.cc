@@ -794,6 +794,19 @@ int main(int argc, char** argv) {
         double ks = 284.0 / CAP_HEIGHT * (CAP_WIDTH / (double)WORK_W);  // work pixels -> preview pixels
         for (size_t i = 0; i < circles.size(); ++i)
             snap.circles.push_back(cv::Vec3f(circles[i][0] * ks, circles[i][1] * ks, circles[i][2] * ks));
+        if (s.roiW < CAP_WIDTH || s.roiH < CAP_HEIGHT || s.roiX > 0 || s.roiY > 0) {  // enlarge the detection area
+            cv::Rect rr = cv::Rect(s.roiX, s.roiY, s.roiW, s.roiH) & cv::Rect(0, 0, CAP_WIDTH, CAP_HEIGHT);
+            if (rr.width >= 16 && rr.height >= 16) {
+                double k = std::min(std::min(228.0 / rr.width, 196.0 / rr.height), 4.0);
+                cv::Mat zoom;
+                cv::resize(gray(rr), zoom, cv::Size(cvRound(rr.width * k), cvRound(rr.height * k)), 0, 0, cv::INTER_LINEAR);
+                cv::cvtColor(zoom, snap.roiView, cv::COLOR_GRAY2BGR);
+                double kw = CAP_WIDTH / (double)WORK_W;  // work pixels -> camera pixels
+                for (size_t i = 0; i < circles.size(); ++i)
+                    snap.roiCircles.push_back(cv::Vec3f((circles[i][0] * kw - rr.x) * k, (circles[i][1] * kw - rr.y) * k,
+                                                        circles[i][2] * kw * k));
+            }
+        }
         snap.count = count;
         snap.result = result;
         snap.fps = fps;

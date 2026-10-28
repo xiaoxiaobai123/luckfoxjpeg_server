@@ -16,6 +16,7 @@ void Settings::clamp() {
     exposure = clampInt(exposure, 0, 400);
     mode = clampInt(mode, 0, 1);
     contrast = clampInt(contrast, 5, 120);
+    lang = clampInt(lang, 0, 1);
     shape = clampInt(shape, 30, 100);
     gain = (gain <= 0) ? 0 : clampInt(gain, 10, 640);
     roiW = clampInt(roiW, 32, 640);
@@ -41,6 +42,7 @@ bool Settings::load(const char* path) {
         else if (!strcmp(key, "gain")) gain = v;
         else if (!strcmp(key, "mode")) mode = v;
         else if (!strcmp(key, "contrast")) contrast = v;
+        else if (!strcmp(key, "lang")) lang = v;
         else if (!strcmp(key, "shape")) shape = v;
         else if (!strcmp(key, "roi_x")) roiX = v;
         else if (!strcmp(key, "roi_y")) roiY = v;
@@ -58,8 +60,8 @@ bool Settings::save(const char* path) const {
     FILE* f = fopen(tmp, "w");
     if (!f) return false;
     fprintf(f, "mode=%d\ntarget=%d\nmin_dia=%d\nmax_dia=%d\nroundness=%d\nedge=%d\ncontrast=%d\nshape=%d\n"
-               "exposure=%d\ngain=%d\nroi_x=%d\nroi_y=%d\nroi_w=%d\nroi_h=%d\n",
-            mode, target, minDia, maxDia, roundness, edge, contrast, shape, exposure, gain, roiX, roiY, roiW, roiH);
+               "exposure=%d\ngain=%d\nroi_x=%d\nroi_y=%d\nroi_w=%d\nroi_h=%d\nlang=%d\n",
+            mode, target, minDia, maxDia, roundness, edge, contrast, shape, exposure, gain, roiX, roiY, roiW, roiH, lang);
     fflush(f);
     fsync(fileno(f));
     bool ok = (fclose(f) == 0);

@@ -18,6 +18,8 @@ struct Snapshot {
     double detectMs = 0;
     double totalMs = 0;              // from the PLC trigger edge to the result
     int trigNo = 0;                  // number of the trigger (counts up, shows that a trigger really arrived)
+    cv::Mat roiView;                 // the detection area enlarged to fit the screen (empty when it is the whole picture)
+    std::vector<cv::Vec3f> roiCircles;  // circles in roiView pixels
     bool busy = false;               // a trigger has arrived, the result is not there yet
     bool held = false;               // frozen picture of the last PLC-triggered measurement (not live)
     std::string status;              // shown instead of the picture when there is none (start-up, camera missing)
