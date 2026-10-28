@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <time.h>
 #include <algorithm>
+#include <math.h>
 #include <string>
 #include <opencv2/imgproc/imgproc.hpp>
 
@@ -357,6 +358,29 @@ static void roundBorder(cv::Mat& img, const cv::Scalar& color, int thick) {
     cv::ellipse(img, cv::Point(x1 - rad, y1 - rad), cv::Size(rad, rad), 0, 0, 90, color, thick, cv::LINE_AA);
 }
 
+// Edge light like a consumer device: a soft glow just inside the outline. With sweep, a bright spot circles the
+// screen edge (phase = its angle), which is how a trigger is shown.
+static void glowBorder(cv::Mat& out, const cv::Scalar& color, int thick, bool sweep, double phase) {
+    cv::Mat mask = cv::Mat::zeros(out.size(), CV_8UC1);
+    roundBorder(mask, cv::Scalar(255), 10);
+    cv::GaussianBlur(mask, mask, cv::Size(0, 0), 4.5);
+    for (int y = 0; y < out.rows; ++y) {
+        const uchar* m = mask.ptr<uchar>(y);
+        cv::Vec3b* o = out.ptr<cv::Vec3b>(y);
+        for (int x = 0; x < out.cols; ++x) {
+            if (!m[x]) continue;
+            double g = m[x] / 255.0 * 1.4;
+            if (sweep) {
+                double w = cos(atan2(y - 142.0, x - 120.0) - phase);
+                w = w > 0 ? w * w * w : 0;
+                g *= 0.25 + 1.1 * w;
+            }
+            for (int c = 0; c < 3; ++c) o[x][c] = (uchar)std::min(255.0, o[x][c] + color[c] * g);
+        }
+    }
+    roundBorder(out, color, thick);
+}
+
 // The camera picture fills the whole screen; the menu and results are laid over it. The picture is scaled to the
 // screen height, so it is wider than the screen: the visible window follows the detection area.
 void Ui::renderScreen(cv::Mat& out, const Snapshot& snap) {
@@ -409,12 +433,17 @@ void Ui::renderScreen(cv::Mat& out, const Snapshot& snap) {
         else if (snap.result == 0) { label = "NG"; col = cv::Scalar(40, 40, 230); tcol = cv::Scalar(90, 90, 255); }
         else if (snap.result == 2) { label = zh ? "错误" : "ERR"; col = cv::Scalar(0, 140, 240); tcol = cv::Scalar(0, 175, 255); }
         if (snap.busy) { label = "..."; col = cv::Scalar(120, 120, 120); tcol = cv::Scalar(0, 220, 255); }
-        roundBorder(out, col, snap.result >= 0 && !snap.busy ? 7 : 3);
-        if (snap.busy) {  // trigger received, measuring: a camera-aperture ring in the middle of the screen
-            const cv::Point mid(120, 142);
-            cv::circle(out, mid, 44, cv::Scalar(0, 220, 255), 6, cv::LINE_AA);
-            cv::circle(out, mid, 26, cv::Scalar(0, 220, 255), 2, cv::LINE_AA);
+        if (snap.trigNo != lastTrigNo_) {
+            lastTrigNo_ = snap.trigNo;
+            trigShownAt_ = nowMs();
         }
+        long long sinceTrig = nowMs() - trigShownAt_;
+        bool sweep = trigShownAt_ > 0 && (snap.busy || sinceTrig < 400);  // light circles the edge on a trigger
+        if (snap.busy) col = cv::Scalar(0, 220, 255);
+        if (snap.result >= 0 || snap.busy)
+            glowBorder(out, col, 4, sweep, sinceTrig / 400.0 * 4 * CV_PI);
+        else
+            roundBorder(out, col, 3);
 
         bool haveCount = (snap.result == 0 || snap.result == 1) && !snap.busy;
         const int cy = 250;  // both on one line, a little above the outline

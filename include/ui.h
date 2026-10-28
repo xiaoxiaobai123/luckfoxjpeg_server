@@ -59,6 +59,8 @@ private:
     std::string message_;
     long long messageUntil_;
     long long saveConfirmUntil_;
+    int lastTrigNo_ = 0;           // trigger number seen on the last frame: a new one starts the light sweep
+    long long trigShownAt_ = 0;
     bool touchDebug_ = false;
     bool touchAvailable_ = true;
     int lastTouchX_ = 0, lastTouchY_ = 0;
