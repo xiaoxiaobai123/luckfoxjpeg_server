@@ -1,5 +1,7 @@
 name: firmware-test
-on: workflow_dispatch
+on:
+  push:
+    branches: [firmware-test]
 
 jobs:
   firmware:
