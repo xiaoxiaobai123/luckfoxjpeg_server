@@ -657,7 +657,7 @@ int main(int argc, char** argv) {
         double t0 = nowMs();
         for (int i = 0; i < 20; ++i) count = detect(img, settings, circles);
         printf("%s: circles=%d -> %s  (%.1f ms/run)\n", g_p.imagePath.c_str(), count,
-               count == settings.target ? "OK" : "NG", (nowMs() - t0) / 20);
+               count >= settings.target ? "OK" : "NG", (nowMs() - t0) / 20);
         return 0;
     }
 
@@ -764,7 +764,7 @@ int main(int argc, char** argv) {
             count = detect(gray, s, circles);
             detectMs = nowMs() - t0;
             if (measure || g_p.continuous) {
-                result = (count == s.target) ? 1 : 0;
+                result = (count >= s.target) ? 1 : 0;  // at least the target number: OK (front), fewer: NG (back)
                 setOutputs(result == 1, result == 0, 0);
                 g_trigBusy = false;
                 g_lastDoneAt = nowMs();

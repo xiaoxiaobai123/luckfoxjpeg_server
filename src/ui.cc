@@ -447,17 +447,14 @@ void Ui::renderScreen(cv::Mat& out, const Snapshot& snap) {
 
     // live verdict for what the camera sees right now: front (OK, count matches) or back (NG).
     // The text is measured and centred inside its coloured block so it can never spill out of it.
-    bool liveOk = (snap.count == s.target);
-    cv::Rect badge(128, 5, 86, 22);
+    bool liveOk = (snap.count >= s.target);  // at least the target number of holes = front (OK)
+    cv::Rect badge((240 - 86) / 2, 5, 86, 22);
     cv::rectangle(out, badge, liveOk ? cv::Scalar(40, 170, 40) : cv::Scalar(40, 40, 200), -1);
     snprintf(b, sizeof(b), "%s %d/%d", liveOk ? "OK" : "NG", snap.count, s.target);
     int base = 0;
     cv::Size ts = cv::getTextSize(b, cv::FONT_HERSHEY_SIMPLEX, 0.55, 2, &base);
     text(out, b, badge.x + (badge.width - ts.width) / 2, badge.y + (badge.height + ts.height) / 2,
          0.55, cv::Scalar(255, 255, 255), 2);
-    // "MENU" sits on the same baseline as the verdict text so the two line up
-    if (s.lang == 1) cnDraw(out, fast_ ? "菜单 x10" : "菜单", 26, badge.y + badge.height / 2, cv::Scalar(0, 255, 255), 16, false);
-    else text(out, fast_ ? "MENU x10" : "MENU", 26, badge.y + (badge.height + ts.height) / 2, 0.55, cv::Scalar(0, 255, 255), 2);
 
     shade(out, cv::Rect(0, kRowTop - 2, 240, kRows * kRowH + 4), cv::Scalar(0, 0, 0), 0.62);
     int first = firstRow();
