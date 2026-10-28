@@ -439,11 +439,11 @@ void Ui::renderScreen(cv::Mat& out, const Snapshot& snap) {
             trigShownAt_ = nowMs();
         }
         long long sinceTrig = nowMs() - trigShownAt_;
-        bool sweep = trigShownAt_ > 0 && (snap.busy || sinceTrig < 400);  // light circles the edge on a trigger
+        bool sweep = trigShownAt_ > 0 && (snap.busy || sinceTrig < 220);  // light circles the edge on a trigger
         if (snap.busy) col = cv::Scalar(0, 220, 255);
         if (snap.result >= 0 || snap.busy)
-            glowBorder(out, col, 4, sweep, sinceTrig / 400.0 * 4 * CV_PI,
-                       snap.busy || sinceTrig < 400 ? 1.0 : 1.0 - (sinceTrig - 400) / 1200.0);  // the glow fades out
+            glowBorder(out, col, 4, sweep, sinceTrig / 220.0 * 2 * CV_PI,
+                       snap.busy || sinceTrig < 220 ? 1.0 : 1.0 - (sinceTrig - 220) / 500.0);  // the glow fades out
         else
             roundBorder(out, col, 3);
 
