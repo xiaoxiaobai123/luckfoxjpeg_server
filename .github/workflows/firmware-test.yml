@@ -1,0 +1,42 @@
+name: firmware-test
+on: workflow_dispatch
+
+jobs:
+  firmware:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 350
+    steps:
+      - name: Free disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/share/swift
+          sudo docker image prune -af || true
+          sudo apt-get clean
+          df -h /
+          nproc; free -g
+      - name: Install packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git ssh make gcc libssl-dev liblz4-tool expect g++ patchelf chrpath gawk texinfo diffstat binfmt-support qemu-user-static bison flex fakeroot cmake gcc-multilib g++-multilib unzip device-tree-compiler ncurses-dev bzip2 expat cpio python3 python3-pip libpython3-dev rsync bc lz4 wget curl file
+      - name: Get SDK
+        run: |
+          git clone --depth 1 https://github.com/LuckfoxTECH/luckfox-pico.git sdk
+          df -h /
+      - name: Build (Mini, SPI NAND, Buildroot)
+        working-directory: sdk
+        run: |
+          start=$(date +%s)
+          printf '1\n1\n0\n' | ./build.sh lunch
+          ./build.sh
+          echo "BUILD SECONDS: $(( $(date +%s) - start ))"
+      - name: Report
+        if: always()
+        run: |
+          df -h /
+          du -sh sdk 2>/dev/null
+          ls -lh sdk/output/image 2>/dev/null
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: firmware
+          path: sdk/output/image/*
