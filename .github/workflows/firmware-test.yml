@@ -37,6 +37,17 @@ jobs:
           df -h /
           du -sh sdk 2>/dev/null
           ls -lh sdk/output/image 2>/dev/null
+      - name: Analyze rootfs
+        if: always()
+        working-directory: sdk
+        run: |
+          ls -lh output/image || true
+          R=$(ls -d sysdrv/out/rootfs_uclibc_rv1106 output/out/rootfs_uclibc_rv1106 2>/dev/null | head -1); echo "ROOTFS=$R"
+          du -sh $R; du -s $R/* $R/usr/* $R/usr/lib/* $R/usr/bin/* 2>/dev/null | sort -rn | head -40
+          ls $R/etc/init.d
+          find sysdrv/source/buildroot -maxdepth 2 -name .config | head
+          for f in $(find sysdrv/source/buildroot -maxdepth 2 -name .config | head -1); do grep -E "^BR2_PACKAGE_[A-Z0-9_]+=y" $f; done
+          ls output/out 2>/dev/null; du -sh output/out/* 2>/dev/null
       - uses: actions/upload-artifact@v4
         if: success()
         with:
