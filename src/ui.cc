@@ -360,7 +360,8 @@ static void roundBorder(cv::Mat& img, const cv::Scalar& color, int thick) {
 
 // Edge light like a consumer device: a soft glow just inside the outline. With sweep, a bright spot circles the
 // screen edge (phase = its angle), which is how a trigger is shown.
-static void glowBorder(cv::Mat& out, const cv::Scalar& color, int thick, bool sweep, double phase) {
+static void glowBorder(cv::Mat& out, const cv::Scalar& color, int thick, bool sweep, double phase, double fade) {
+    if (fade <= 0.01) { roundBorder(out, color, thick); return; }
     cv::Mat mask = cv::Mat::zeros(out.size(), CV_8UC1);
     roundBorder(mask, cv::Scalar(255), 10);
     cv::GaussianBlur(mask, mask, cv::Size(0, 0), 4.5);
@@ -369,7 +370,7 @@ static void glowBorder(cv::Mat& out, const cv::Scalar& color, int thick, bool sw
         cv::Vec3b* o = out.ptr<cv::Vec3b>(y);
         for (int x = 0; x < out.cols; ++x) {
             if (!m[x]) continue;
-            double g = m[x] / 255.0 * 1.4;
+            double g = m[x] / 255.0 * 1.4 * fade;
             if (sweep) {
                 double w = cos(atan2(y - 142.0, x - 120.0) - phase);
                 w = w > 0 ? w * w * w : 0;
@@ -441,7 +442,8 @@ void Ui::renderScreen(cv::Mat& out, const Snapshot& snap) {
         bool sweep = trigShownAt_ > 0 && (snap.busy || sinceTrig < 400);  // light circles the edge on a trigger
         if (snap.busy) col = cv::Scalar(0, 220, 255);
         if (snap.result >= 0 || snap.busy)
-            glowBorder(out, col, 4, sweep, sinceTrig / 400.0 * 4 * CV_PI);
+            glowBorder(out, col, 4, sweep, sinceTrig / 400.0 * 4 * CV_PI,
+                       snap.busy || sinceTrig < 400 ? 1.0 : 1.0 - (sinceTrig - 400) / 1200.0);  // the glow fades out
         else
             roundBorder(out, col, 3);
 
