@@ -362,14 +362,14 @@ static void roundBorder(cv::Mat& img, const cv::Scalar& color, int thick) {
 static void glowBorder(cv::Mat& out, const cv::Scalar& color, int thick, double fade) {
     if (fade <= 0.01) { roundBorder(out, color, thick); return; }
     cv::Mat mask = cv::Mat::zeros(out.size(), CV_8UC1);
-    roundBorder(mask, cv::Scalar(255), 6);
-    cv::GaussianBlur(mask, mask, cv::Size(0, 0), 3.0);
+    roundBorder(mask, cv::Scalar(255), 3);
+    cv::GaussianBlur(mask, mask, cv::Size(0, 0), 1.4);
     for (int y = 0; y < out.rows; ++y) {
         const uchar* m = mask.ptr<uchar>(y);
         cv::Vec3b* o = out.ptr<cv::Vec3b>(y);
         for (int x = 0; x < out.cols; ++x) {
             if (!m[x]) continue;
-            double g = m[x] / 255.0 * 1.1 * fade;
+            double g = m[x] / 255.0 * 0.9 * fade;
             for (int c = 0; c < 3; ++c) o[x][c] = (uchar)std::min(255.0, o[x][c] + color[c] * g);
         }
     }
@@ -450,7 +450,7 @@ void Ui::renderScreen(cv::Mat& out, const Snapshot& snap) {
         } else if (snap.result >= 0) {
             fade = 0;
         }
-        if (snap.result >= 0 || snap.busy) glowBorder(out, col, 4, fade);
+        if (snap.result >= 0 || snap.busy) glowBorder(out, col, 3, fade);
         else roundBorder(out, col, 3);
 
         bool haveCount = (snap.result == 0 || snap.result == 1) && !snap.busy;
