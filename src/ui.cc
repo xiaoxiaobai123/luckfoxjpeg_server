@@ -367,11 +367,12 @@ void Ui::renderScreen(cv::Mat& out, const Snapshot& snap) {
     char b[64];
 
     double sc = 0;  // preview pixels per camera pixel
-    int panX = 0;   // left edge of the visible window inside the preview
-    // once a detection area is set, the run screen shows that area enlarged (the menu shows the whole picture)
+    int yOff = 0;   // top of the preview picture on the screen
+    // run screen: the detection area (the whole picture when none is set) scaled up to fill the screen, like a
+    // hardware ROI. Menu: the whole picture, scaled to the screen width, so the area can be set against it.
     const bool zoomed = !menu_ && !snap.roiView.empty();
     if (zoomed) {
-        int x0 = (240 - snap.roiView.cols) / 2, y0 = 10 + (204 - snap.roiView.rows) / 2;
+        int x0 = (240 - snap.roiView.cols) / 2, y0 = (284 - snap.roiView.rows) / 2;
         cv::Rect dst(x0, y0, snap.roiView.cols, snap.roiView.rows);
         dst &= cv::Rect(0, 0, 240, 284);
         snap.roiView(cv::Rect(0, 0, dst.width, dst.height)).copyTo(out(dst));
@@ -379,24 +380,21 @@ void Ui::renderScreen(cv::Mat& out, const Snapshot& snap) {
             for (size_t i = 0; i < snap.roiCircles.size(); ++i)
                 cv::circle(out, cv::Point(cvRound(snap.roiCircles[i][0]) + x0, cvRound(snap.roiCircles[i][1]) + y0),
                            cvRound(snap.roiCircles[i][2]), cv::Scalar(0, 255, 0), 2, cv::LINE_AA);
-        cv::rectangle(out, dst, cv::Scalar(0, 200, 255), 1);
-    }
-    if (!zoomed && !snap.preview.empty()) {
-        sc = snap.preview.rows / 480.0;
-        int centre = cvRound((s.roiX + s.roiW / 2) * sc);
-        panX = std::max(0, std::min(centre - 120, snap.preview.cols - 240));
-        cv::Rect r(panX, 0, std::min(240, snap.preview.cols - panX), std::min(284, snap.preview.rows));
-        snap.preview(r).copyTo(out(cv::Rect(0, 0, r.width, r.height)));
+    } else if (!snap.preview.empty()) {
+        sc = snap.preview.cols / 640.0;
+        yOff = kHeaderH + 4;
+        cv::Rect r(0, yOff, std::min(240, snap.preview.cols), std::min(284 - yOff, snap.preview.rows));
+        snap.preview(cv::Rect(0, 0, r.width, r.height)).copyTo(out(r));
         if (menu_ || snap.result >= 0)
             for (size_t i = 0; i < snap.circles.size(); ++i)
-                cv::circle(out, cv::Point(cvRound(snap.circles[i][0]) - panX, cvRound(snap.circles[i][1])),
+                cv::circle(out, cv::Point(cvRound(snap.circles[i][0]), cvRound(snap.circles[i][1]) + yOff),
                            cvRound(snap.circles[i][2]), cv::Scalar(0, 255, 0), 2, cv::LINE_AA);
     }
 
-    // detection area: only what is inside the frame is looked at
+    // detection area: only what is inside the frame is looked at (menu only: the run screen shows just that area)
     bool areaRow = menu_ && sel_ < (int)items.size() && items[sel_] >= IT_AX && items[sel_] <= IT_AH;
     if (!zoomed && sc > 0 && (s.roiX != 0 || s.roiY != 0 || s.roiW != 640 || s.roiH != 480 || areaRow)) {
-        cv::Rect ra(cvRound(s.roiX * sc) - panX, cvRound(s.roiY * sc), cvRound(s.roiW * sc), cvRound(s.roiH * sc));
+        cv::Rect ra(cvRound(s.roiX * sc), cvRound(s.roiY * sc) + yOff, cvRound(s.roiW * sc), cvRound(s.roiH * sc));
         cv::rectangle(out, ra, cv::Scalar(0, 200, 255), 1);
     }
 

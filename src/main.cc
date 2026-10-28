@@ -789,17 +789,18 @@ int main(int argc, char** argv) {
         // picture for the LCD thread
         Snapshot snap;
         cv::Mat small;
-        cv::resize(gray, small, cv::Size(379, 284), 0, 0, cv::INTER_AREA);  // full screen height, 4:3 stays 4:3
+        cv::resize(gray, small, cv::Size(240, 180), 0, 0, cv::INTER_AREA);  // the whole picture, scaled to the screen width
         cv::cvtColor(small, snap.preview, cv::COLOR_GRAY2BGR);
-        double ks = 284.0 / CAP_HEIGHT * (CAP_WIDTH / (double)WORK_W);  // work pixels -> preview pixels
+        double ks = 240.0 / WORK_W;  // work pixels -> preview pixels
         for (size_t i = 0; i < circles.size(); ++i)
             snap.circles.push_back(cv::Vec3f(circles[i][0] * ks, circles[i][1] * ks, circles[i][2] * ks));
-        if (s.roiW < CAP_WIDTH || s.roiH < CAP_HEIGHT || s.roiX > 0 || s.roiY > 0) {  // enlarge the detection area
+        {  // the detection area (the whole picture when none is set) scaled to fill the screen: the run-screen picture
             cv::Rect rr = cv::Rect(s.roiX, s.roiY, s.roiW, s.roiH) & cv::Rect(0, 0, CAP_WIDTH, CAP_HEIGHT);
             if (rr.width >= 16 && rr.height >= 16) {
-                double k = std::min(std::min(228.0 / rr.width, 196.0 / rr.height), 4.0);
+                double k = std::min(std::min(240.0 / rr.width, 284.0 / rr.height), 6.0);
                 cv::Mat zoom;
-                cv::resize(gray(rr), zoom, cv::Size(cvRound(rr.width * k), cvRound(rr.height * k)), 0, 0, cv::INTER_LINEAR);
+                cv::resize(gray(rr), zoom, cv::Size(cvRound(rr.width * k), cvRound(rr.height * k)), 0, 0,
+                           k < 1 ? cv::INTER_AREA : cv::INTER_LINEAR);
                 cv::cvtColor(zoom, snap.roiView, cv::COLOR_GRAY2BGR);
                 double kw = CAP_WIDTH / (double)WORK_W;  // work pixels -> camera pixels
                 for (size_t i = 0; i < circles.size(); ++i)
