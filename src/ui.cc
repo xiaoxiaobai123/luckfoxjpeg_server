@@ -358,24 +358,18 @@ static void roundBorder(cv::Mat& img, const cv::Scalar& color, int thick) {
     cv::ellipse(img, cv::Point(x1 - rad, y1 - rad), cv::Size(rad, rad), 0, 0, 90, color, thick, cv::LINE_AA);
 }
 
-// Edge light like a consumer device: a soft glow just inside the outline. With sweep, a bright spot circles the
-// screen edge (phase = its angle), which is how a trigger is shown.
-static void glowBorder(cv::Mat& out, const cv::Scalar& color, int thick, bool sweep, double phase, double fade) {
+// Edge light like a consumer device: a small, soft glow just inside the outline; fade scales its strength.
+static void glowBorder(cv::Mat& out, const cv::Scalar& color, int thick, double fade) {
     if (fade <= 0.01) { roundBorder(out, color, thick); return; }
     cv::Mat mask = cv::Mat::zeros(out.size(), CV_8UC1);
-    roundBorder(mask, cv::Scalar(255), 10);
-    cv::GaussianBlur(mask, mask, cv::Size(0, 0), 4.5);
+    roundBorder(mask, cv::Scalar(255), 6);
+    cv::GaussianBlur(mask, mask, cv::Size(0, 0), 3.0);
     for (int y = 0; y < out.rows; ++y) {
         const uchar* m = mask.ptr<uchar>(y);
         cv::Vec3b* o = out.ptr<cv::Vec3b>(y);
         for (int x = 0; x < out.cols; ++x) {
             if (!m[x]) continue;
-            double g = m[x] / 255.0 * 1.4 * fade;
-            if (sweep) {
-                double w = cos(atan2(y - 142.0, x - 120.0) - phase);
-                w = w > 0 ? w * w * w : 0;
-                g *= 0.25 + 1.1 * w;
-            }
+            double g = m[x] / 255.0 * 1.1 * fade;
             for (int c = 0; c < 3; ++c) o[x][c] = (uchar)std::min(255.0, o[x][c] + color[c] * g);
         }
     }
@@ -434,18 +428,30 @@ void Ui::renderScreen(cv::Mat& out, const Snapshot& snap) {
         else if (snap.result == 0) { label = "NG"; col = cv::Scalar(40, 40, 230); tcol = cv::Scalar(90, 90, 255); }
         else if (snap.result == 2) { label = zh ? "错误" : "ERR"; col = cv::Scalar(0, 140, 240); tcol = cv::Scalar(0, 175, 255); }
         if (snap.busy) { label = "..."; col = cv::Scalar(120, 120, 120); tcol = cv::Scalar(0, 220, 255); }
+        // edge light: yellow while measuring, then it turns into the result colour (green = OK, red = NG) with a
+        // gradual change, the glow fades out after a moment and a thin outline stays
+        const long long now = nowMs();
+        const cv::Scalar yellow(0, 220, 255);
         if (snap.trigNo != lastTrigNo_) {
             lastTrigNo_ = snap.trigNo;
-            trigShownAt_ = nowMs();
+            trigShownAt_ = now;
+            if (!snap.busy) resultAt_ = now;
         }
-        long long sinceTrig = nowMs() - trigShownAt_;
-        bool sweep = trigShownAt_ > 0 && (snap.busy || sinceTrig < 220);  // light circles the edge on a trigger
-        if (snap.busy) col = cv::Scalar(0, 220, 255);
-        if (snap.result >= 0 || snap.busy)
-            glowBorder(out, col, 4, sweep, sinceTrig / 220.0 * 2 * CV_PI,
-                       snap.busy || sinceTrig < 220 ? 1.0 : 1.0 - (sinceTrig - 220) / 500.0);  // the glow fades out
-        else
-            roundBorder(out, col, 3);
+        if (wasBusy_ && !snap.busy) resultAt_ = now;
+        wasBusy_ = snap.busy;
+        double fade = 1.0;
+        if (snap.busy) {
+            col = yellow;
+        } else if (snap.result >= 0 && trigShownAt_ > 0) {
+            double t = std::min(1.0, (now - resultAt_) / 300.0);  // yellow -> result colour
+            col = yellow * (1.0 - t) + col * t;
+            long long since = now - resultAt_;
+            fade = since < 300 ? 1.0 : 1.0 - (since - 300) / 500.0;
+        } else if (snap.result >= 0) {
+            fade = 0;
+        }
+        if (snap.result >= 0 || snap.busy) glowBorder(out, col, 4, fade);
+        else roundBorder(out, col, 3);
 
         bool haveCount = (snap.result == 0 || snap.result == 1) && !snap.busy;
         const int cy = 250;  // both on one line, a little above the outline
