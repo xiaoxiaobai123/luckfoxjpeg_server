@@ -24,11 +24,28 @@ jobs:
         run: |
           git clone --depth 1 https://github.com/LuckfoxTECH/luckfox-pico.git sdk
           df -h /
+      - name: Get the circle checker program (latest good build of this repo)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          id=$(gh run list -R ${{ github.repository }} --workflow build.yml --branch circle-detect --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          echo "program from run $id"
+          gh run download $id -R ${{ github.repository }} -n luckfox_jpeg_server -D app
+          ls -l app
+      - uses: actions/checkout@v4
+        with:
+          path: repo
+      - name: Slim the SDK and add the program
+        run: bash repo/firmware/prepare.sh sdk app/luckfox_jpeg_server
       - name: Build (Mini, SPI NAND, Buildroot)
         working-directory: sdk
         run: |
           start=$(date +%s)
-          printf '1\n1\n0\n' | ./build.sh lunch
+          printf '1
+1
+0
+' | ./build.sh lunch
+          echo 'export RK_POST_OVERLAY="$RK_POST_OVERLAY overlay-circle"' >> .BoardConfig.mk
           ./build.sh
           echo "BUILD SECONDS: $(( $(date +%s) - start ))"
       - name: Report
@@ -43,7 +60,7 @@ jobs:
         run: |
           ls -lh output/image || true
           R=$(ls -d sysdrv/out/rootfs_uclibc_rv1106 output/out/rootfs_uclibc_rv1106 2>/dev/null | head -1); echo "ROOTFS=$R"
-          du -sh $R; du -s $R/* $R/usr/* $R/usr/lib/* $R/usr/bin/* 2>/dev/null | sort -rn | head -40
+          du -sh $R; for d in $R/usr $R/usr/lib $R/usr/bin $R/usr/sbin $R/lib $R/bin $R/etc $R/opt; do du -s $d/* 2>/dev/null; done | sort -rn | head -40
           ls $R/etc/init.d
           find sysdrv/source/buildroot -maxdepth 2 -name .config | head
           for f in $(find sysdrv/source/buildroot -maxdepth 2 -name .config | head -1); do grep -E "^BR2_PACKAGE_[A-Z0-9_]+=y" $f; done

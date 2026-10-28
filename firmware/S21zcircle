@@ -1,0 +1,97 @@
+#!/bin/sh
+# Circle checker autostart (slim firmware: program and helper scripts live in /opt/circle, settings in /userdata/circle.conf)
+# after the storage is mounted and the stock app launcher has been started in the background).
+#  - SPI0 (LCD) and I2C3 (touch) are switched on here, so we do not wait for "luckfox-config load" (disabled).
+#  - The program starts at once. The stock camera app (rkipc) owns the camera: a watcher stops it as soon as it
+#    appears and then creates $FREE, which the program waits for before it touches the camera.
+# Settings come from /userdata/circle.conf (written by the on-screen menu "Save").
+# To go back to the stock boot: rename _off_S99luckfoxconfigload, _off_S91smb back (remove the leading "_off_") and
+# remove this file.
+APP_DIR=/opt/circle
+APP=$APP_DIR/circle_detect
+LOG=/tmp/circle.log
+FREE=/tmp/camera_free
+
+up() { cut -d' ' -f1 /proc/uptime; }
+mark() { echo "[boot $(up)s] $1" >> $LOG; }
+
+watcher() {
+    # wait for the stock app to appear (RkLunch.sh starts it some seconds after boot), then stop it cleanly
+    n=0
+    while [ $n -lt 90 ]; do
+        ps | grep -q "[r]kipc" && break
+        sleep 1; n=$((n+1))
+    done
+    mark "stock camera app seen after ${n}s of waiting"
+    if ps | grep -q "[r]kipc"; then
+        sleep 3   # let it finish starting, killing it half-way can leave the camera stuck
+        killall luckfox_switch_rgb_resolution 2>/dev/null
+        killall rkipc 2>/dev/null
+        n=0
+        while [ $n -lt 20 ] && ps | grep -q "[r]kipc"; do sleep 1; n=$((n+1)); done
+    fi
+    mark "stock camera app stopped, camera is free"
+    touch $FREE
+}
+
+run() {
+    mark "autostart script running"
+    rm -f $FREE
+    # configfs is normally mounted later by S50usbdevice; the overlays below need it, so mount it now (mounting
+    # it a second time later is harmless)
+    mountpoint -q /sys/kernel/config || mount -t configfs none /sys/kernel/config
+    sh $APP_DIR/spi0_on.sh >> $LOG 2>&1      # LCD bus
+    # Hardware profile, from the file $APP_DIR/profile (one word):
+    #   touch = touch panel on I2C3 (pins 12/14/15), keys on the ADC ladder (pin 19)   <- how it was first built
+    #   pad   = game pad with its common wire on ground (see below)
+    #   keys  = no touch panel: UP/DOWN/LEFT/RIGHT on pins 14/15/12/16 (key to 3.3 V), OK and ADJ on the ADC
+    #           ladder (pin 19: OK through 1k, ADJ through 3.3k), LCD backlight wired straight to 3.3 V
+    PROFILE=$(cat $APP_DIR/profile 2>/dev/null)
+    if [ "$PROFILE" = "pad" ]; then
+        # one-piece game pad, common wire on ground, every key on a GPIO with a 10k pull-up to 3.3 V:
+        # OK = pin 18 (GPIO 4, freed because error is now signalled as OK+NG both high), UP/DOWN/LEFT/RIGHT =
+        # pins 14/15/12/16; backlight wired to 3.3 V; no ADC
+        KEYFLAGS="--keys pad --adc -1 --keypins 4,58,59,56,54,-1 --lcd 52,53,-1"
+        PINS="55,51,57,-1"
+        mark "profile: pad (game pad, no touch panel)"
+    elif [ "$PROFILE" = "keys" ]; then
+        KEYFLAGS="--keys mixed --adc 0 --keypins -1,58,59,56,54,-1 --lcd 52,53,-1"
+        mark "profile: keys (no touch panel)"
+    else
+        sh $APP_DIR/i2c3_on.sh >> $LOG 2>&1      # touch controller bus (I2C3 on header pins 14/15)
+        KEYFLAGS="--keys adc --adc 0 --touch /dev/i2c-3 --touch-rst 56 --lcd 52,53,54"
+        mark "profile: touch"
+    fi
+    n=0; while [ $n -lt 30 ] && [ ! -e /dev/spidev0.0 ]; do sleep 0.1; n=$((n+1)); done
+    mark "SPI0 ready"
+    watcher &
+    export LD_LIBRARY_PATH=/oem/usr/lib:/oem/lib:/usr/lib:/lib
+    cd $APP_DIR
+    # keep the log small: it lives in RAM
+    ( while true; do sleep 60; [ "$(wc -c < $LOG 2>/dev/null || echo 0)" -gt 1000000 ] && : > $LOG; done ) &
+    while true; do
+        mark "starting the program"
+        # --pins: PLC trigger, OK, NG, ERR output (GPIO numbers); the key and LCD flags depend on the profile above
+        $APP --web 8080 --conf /userdata/circle.conf $KEYFLAGS \
+             --pins ${PINS:-55,51,57,4} --wait-file $FREE --auto-restart 2 >> $LOG 2>&1
+        mark "the program exited (code $?), restarting in 5 s"
+        sleep 5
+    done
+}
+
+case "$1" in
+    start)
+        [ -x $APP ] || exit 0
+        run &
+        ;;
+    stop)
+        killall circle_detect 2>/dev/null
+        ;;
+    restart)
+        $0 stop; sleep 2; $0 start
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart}"; exit 1
+        ;;
+esac
+exit 0
