@@ -32,6 +32,7 @@ extern "C" {
 #include "luckfox_mpi.h"
 #include "gpio.h"
 #include "settings.h"
+#include "match.h"
 #include "keys.h"
 #include "display.h"
 #include "ui.h"
@@ -228,7 +229,20 @@ static int countDarkHoles(const cv::Mat& gray, const Settings& s, std::vector<cv
     return (int)circles.size();
 }
 
+// Template mode: the learned picture (kept in RAM, saved next to the settings file so it survives a restart).
+static Template g_tpl;
+static std::string g_tplPath;
+static bool g_matchFound = true;  // false: template mode without a usable template (not learned yet, or bigger than the area)
+
 static int detect(const cv::Mat& gray, const Settings& s, std::vector<cv::Vec3f>& circles) {
+    if (s.mode == 2) {  // the "count" is the match score, 0..100
+        MatchResult m = tplMatch(gray, s, g_tpl);
+        g_matchFound = m.found;
+        circles.clear();
+        if (m.found)  // circle around the place where it was found (half-size camera pixels, like the other modes)
+            circles.push_back(cv::Vec3f(m.center.x * 0.5f, m.center.y * 0.5f, std::max(g_tpl.img.cols, g_tpl.img.rows) * 0.25f));
+        return cvRound(m.score);
+    }
     return s.mode == 1 ? countDarkHoles(gray, s, circles) : countCircles(gray, s, circles);
 }
 
@@ -664,6 +678,9 @@ int main(int argc, char** argv) {
     signal(SIGINT, onSignal);
     signal(SIGTERM, onSignal);
     g_shared.set(settings);
+    g_tplPath = g_p.conf + ".tpl.png";
+    tplLoad(g_tpl, g_tplPath);  // no file yet is fine
+    g_shared.setHaveTemplate(g_tpl.valid());
 
     // The screen comes first: logo and a progress message as early as possible, then everything else is set up
     // (and the camera, if it does not come up, is explained on the screen).
@@ -749,6 +766,13 @@ int main(int argc, char** argv) {
             appliedGain = s.gain;
         }
 
+        if (g_shared.takeLearn()) {  // "Learn" in the menu: cut the template out of this frame
+            bool ok = tplLearn(gray, s, g_tpl) && tplSave(g_tpl, g_tplPath);
+            g_shared.setHaveTemplate(g_tpl.valid());
+            g_shared.setLearnResult(ok ? 1 : -1);
+            printf("template %s (%dx%d)\n", ok ? "learned" : "FAILED", s.tplW, s.tplH);
+        }
+
         // A trigger seen now may have arrived while this frame was exposing: skip it, measure the next.
         bool measure = false;
         if (g_trigPending) {
@@ -764,8 +788,14 @@ int main(int argc, char** argv) {
             count = detect(gray, s, circles);
             detectMs = nowMs() - t0;
             if (measure || g_p.continuous) {
-                result = (count >= s.target) ? 1 : 0;  // at least the target number: OK (front), fewer: NG (back)
-                setOutputs(result == 1, result == 0, 0);
+                if (s.mode == 2 && !g_matchFound) {  // no usable template: error (OK and NG both high)
+                    result = 2;
+                    setOutputs(0, 0, 1);
+                } else {
+                    // at least the target number (or the match score): OK (front), less: NG (back)
+                    result = (count >= (s.mode == 2 ? s.tplScore : s.target)) ? 1 : 0;
+                    setOutputs(result == 1, result == 0, 0);
+                }
                 g_trigBusy = false;
                 g_lastDoneAt = nowMs();
                 static int lastPrinted = -2;

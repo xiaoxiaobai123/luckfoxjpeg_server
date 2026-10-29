@@ -1,6 +1,7 @@
 #include "ui.h"
 #include "logo.h"
 #include "font_cn.h"
+#include "match.h"
 
 #include <stdio.h>
 #include <time.h>
@@ -16,6 +17,7 @@ enum Item {
     IT_ROUND, IT_EDGE,        // circle mode only
     IT_CONTRAST, IT_SHAPE,    // dark-hole mode only
     IT_EXPOSURE, IT_GAIN, IT_AX, IT_AY, IT_AW, IT_AH,
+    IT_TSCORE, IT_TANGLE, IT_TSHAPE, IT_TX, IT_TY, IT_TW, IT_TH, IT_LEARN,  // template mode only
     IT_LANG, IT_SAVE, IT_DISCARD
 };
 
@@ -30,16 +32,28 @@ long long nowMs() {
     return (long long)t.tv_sec * 1000 + t.tv_nsec / 1000000;
 }
 
-bool isValueItem(int id) { return id != IT_SAVE && id != IT_DISCARD; }
+bool isValueItem(int id) { return id != IT_SAVE && id != IT_DISCARD && id != IT_LEARN; }
 
 // The rows that are shown depend on the detection mode.
 std::vector<int> visibleItems(int mode) {
     std::vector<int> v;
     v.push_back(IT_MODE);
-    v.push_back(IT_TARGET);
-    v.push_back(IT_MINDIA);
-    v.push_back(IT_MAXDIA);
-    if (mode == 1) {
+    if (mode == 2) {
+        v.push_back(IT_TSCORE);
+        v.push_back(IT_TANGLE);
+        v.push_back(IT_TSHAPE);
+        v.push_back(IT_TX);
+        v.push_back(IT_TY);
+        v.push_back(IT_TW);
+        v.push_back(IT_TH);
+        v.push_back(IT_LEARN);
+    } else {
+        v.push_back(IT_TARGET);
+        v.push_back(IT_MINDIA);
+        v.push_back(IT_MAXDIA);
+    }
+    if (mode == 2) {
+    } else if (mode == 1) {
         v.push_back(IT_CONTRAST);
         v.push_back(IT_SHAPE);
     } else {
@@ -67,7 +81,15 @@ Ui::Ui(SharedSettings& shared, const std::string& confPath)
 std::string Ui::itemText(int id, const Settings& s) const {
     char b[48];
     switch (id) {
-    case IT_MODE: snprintf(b, sizeof(b), "Mode      %s", s.mode == 1 ? "Dark" : "Circle"); break;
+    case IT_MODE: snprintf(b, sizeof(b), "Mode      %s", s.mode == 2 ? "Template" : (s.mode == 1 ? "Dark" : "Circle")); break;
+    case IT_TSCORE: snprintf(b, sizeof(b), "Match min %d", s.tplScore); break;
+    case IT_TANGLE: snprintf(b, sizeof(b), "Rotation  +-%d deg", s.tplAngle); break;
+    case IT_TSHAPE: snprintf(b, sizeof(b), "Tpl shape %s", s.tplShape ? "Circle" : "Rect"); break;
+    case IT_TX: snprintf(b, sizeof(b), "Tpl x     %d", s.tplX); break;
+    case IT_TY: snprintf(b, sizeof(b), "Tpl y     %d", s.tplY); break;
+    case IT_TW: snprintf(b, sizeof(b), "Tpl wide  %d", s.tplW); break;
+    case IT_TH: snprintf(b, sizeof(b), "Tpl high  %d", s.tplH); break;
+    case IT_LEARN: snprintf(b, sizeof(b), "[ Learn: %s ]", shared_.haveTemplate() ? "set" : "none"); break;
     case IT_TARGET: snprintf(b, sizeof(b), "Count     %d", s.target); break;
     case IT_MINDIA: snprintf(b, sizeof(b), "Min dia   %d px", s.minDia); break;
     case IT_MAXDIA: snprintf(b, sizeof(b), "Max dia   %d px", s.maxDia); break;
@@ -117,7 +139,14 @@ void Ui::changeValue(int dir) {
     if (sel_ < 0 || sel_ >= (int)items.size()) return;
     int step = fast_ ? 10 : 1;
     switch (items[sel_]) {
-    case IT_MODE: s.mode = dir > 0 ? 1 : 0; break;
+    case IT_MODE: s.mode = std::min(2, std::max(0, s.mode + dir)); break;
+    case IT_TSCORE: s.tplScore += dir * step; break;
+    case IT_TANGLE: s.tplAngle += dir; break;
+    case IT_TSHAPE: s.tplShape = s.tplShape ? 0 : 1; break;
+    case IT_TX: s.tplX += dir * step * 4; break;
+    case IT_TY: s.tplY += dir * step * 4; break;
+    case IT_TW: s.tplW += dir * step * 4; break;
+    case IT_TH: s.tplH += dir * step * 4; break;
     case IT_TARGET: s.target += dir * step; break;
     case IT_MINDIA: s.minDia += dir * step * 2; break;
     case IT_MAXDIA: s.maxDia += dir * step * 2; break;
@@ -159,6 +188,10 @@ void Ui::activate() {
         } else {
             saveConfirmUntil_ = t + 3000;
         }
+    } else if (items[sel_] == IT_LEARN) {
+        shared_.requestLearn();
+        message_ = "Learning...";
+        messageUntil_ = nowMs() + 1200;
     } else if (items[sel_] == IT_DISCARD) {
         shared_.set(backup_);
         message_ = "Changes discarded";
@@ -303,11 +336,19 @@ static void textOutline(cv::Mat& img, const std::string& s, int x, int y, double
 }
 
 // Menu row in Chinese: label and value are drawn separately so the values line up in a column.
-static void itemPartsZh(int id, const Settings& s, bool savePending, std::string& label, std::string& value) {
+static void itemPartsZh(int id, const Settings& s, bool savePending, bool haveTpl, std::string& label, std::string& value) {
     char b[48];
     value.clear();
     switch (id) {
-    case IT_MODE: label = "模式"; value = s.mode == 1 ? "暗孔" : "圆形"; break;
+    case IT_MODE: label = "模式"; value = s.mode == 2 ? "模板" : (s.mode == 1 ? "暗孔" : "圆形"); break;
+    case IT_TSCORE: label = "匹配分数"; snprintf(b, sizeof(b), "%d", s.tplScore); value = b; break;
+    case IT_TANGLE: label = "旋转范围"; snprintf(b, sizeof(b), "±%d°", s.tplAngle); value = b; break;
+    case IT_TSHAPE: label = "模板形状"; value = s.tplShape ? "圆形" : "矩形"; break;
+    case IT_TX: label = "模板 X"; snprintf(b, sizeof(b), "%d", s.tplX); value = b; break;
+    case IT_TY: label = "模板 Y"; snprintf(b, sizeof(b), "%d", s.tplY); value = b; break;
+    case IT_TW: label = "模板 宽"; snprintf(b, sizeof(b), "%d", s.tplW); value = b; break;
+    case IT_TH: label = "模板 高"; snprintf(b, sizeof(b), "%d", s.tplH); value = b; break;
+    case IT_LEARN: label = haveTpl ? "[ 学习模板:已有 ]" : "[ 学习模板:无 ]"; break;
     case IT_TARGET: label = "数量"; snprintf(b, sizeof(b), "%d", s.target); value = b; break;
     case IT_MINDIA: label = "最小直径"; snprintf(b, sizeof(b), "%d px", s.minDia); value = b; break;
     case IT_MAXDIA: label = "最大直径"; snprintf(b, sizeof(b), "%d px", s.maxDia); value = b; break;
@@ -339,6 +380,9 @@ static std::string messageZh(const std::string& m) {
     if (m == "Saved") return "已保存";
     if (m == "Save FAILED") return "保存失败";
     if (m == "Changes discarded") return "已放弃修改";
+    if (m == "Learning...") return "学习中...";
+    if (m == "Template saved") return "已学习模板";
+    if (m == "Learn FAILED") return "学习失败";
     return m;
 }
 
@@ -383,6 +427,7 @@ void Ui::renderScreen(cv::Mat& out, const Snapshot& snap) {
     out.setTo(cv::Scalar(24, 24, 24));
     Settings s = shared_.get();
     std::vector<int> items = visibleItems(s.mode);
+    const int thr = s.mode == 2 ? s.tplScore : s.target;  // count (holes) or score (template) that means OK
     char b[64];
 
     double sc = 0;  // preview pixels per camera pixel
@@ -415,6 +460,13 @@ void Ui::renderScreen(cv::Mat& out, const Snapshot& snap) {
     if (!zoomed && sc > 0 && (s.roiX != 0 || s.roiY != 0 || s.roiW != 640 || s.roiH != 480 || areaRow)) {
         cv::Rect ra(cvRound(s.roiX * sc), cvRound(s.roiY * sc) + yOff, cvRound(s.roiW * sc), cvRound(s.roiH * sc));
         cv::rectangle(out, ra, cv::Scalar(0, 200, 255), 1);
+    }
+    if (!zoomed && sc > 0 && menu_ && s.mode == 2) {  // where the template is cut out when learned (cyan)
+        cv::Rect rt(cvRound(s.tplX * sc), cvRound(s.tplY * sc) + yOff, cvRound(s.tplW * sc), cvRound(s.tplH * sc));
+        if (s.tplShape == 1)
+            cv::ellipse(out, cv::Point(rt.x + rt.width / 2, rt.y + rt.height / 2), cv::Size(rt.width / 2, rt.height / 2), 0, 0, 360,
+                        cv::Scalar(255, 255, 0), 1, cv::LINE_AA);
+        else cv::rectangle(out, rt, cv::Scalar(255, 255, 0), 1);
     }
 
     if (!menu_) {
@@ -463,7 +515,7 @@ void Ui::renderScreen(cv::Mat& out, const Snapshot& snap) {
             textOutline(out, label, 34, cy + ts.height / 2, 0.9, tcol, 2);
         }
         if (haveCount) {
-            snprintf(b, sizeof(b), "%d/%d", snap.count, s.target);
+            snprintf(b, sizeof(b), "%d/%d", snap.count, thr);
             cv::Size cs = cv::getTextSize(b, cv::FONT_HERSHEY_SIMPLEX, 0.6, 2, &base);
             textOutline(out, b, 206 - cs.width, cy + cs.height / 2, 0.6, tcol, 2);
         }
@@ -489,15 +541,20 @@ void Ui::renderScreen(cv::Mat& out, const Snapshot& snap) {
 
     // live verdict for what the camera sees right now: front (OK, count matches) or back (NG).
     // The text is measured and centred inside its coloured block so it can never spill out of it.
-    bool liveOk = (snap.count >= s.target);  // at least the target number of holes = front (OK)
+    bool liveOk = (snap.count >= thr);  // at least the target number of holes = front (OK)
     cv::Rect badge((240 - 86) / 2, 5, 86, 22);
     cv::rectangle(out, badge, liveOk ? cv::Scalar(40, 170, 40) : cv::Scalar(40, 40, 200), -1);
-    snprintf(b, sizeof(b), "%s %d/%d", liveOk ? "OK" : "NG", snap.count, s.target);
+    snprintf(b, sizeof(b), "%s %d/%d", liveOk ? "OK" : "NG", snap.count, thr);
     int base = 0;
     cv::Size ts = cv::getTextSize(b, cv::FONT_HERSHEY_SIMPLEX, 0.55, 2, &base);
     text(out, b, badge.x + (badge.width - ts.width) / 2, badge.y + (badge.height + ts.height) / 2,
          0.55, cv::Scalar(255, 255, 255), 2);
 
+    if (nowMs() < messageUntil_) {  // e.g. the result of "Learn"
+        shade(out, cv::Rect(0, kRowTop - 40, 240, 30), cv::Scalar(0, 0, 0), 0.75);
+        if (s.lang == 1) cnDraw(out, messageZh(message_), 18, kRowTop - 25, cv::Scalar(0, 255, 255), 22, false);
+        else text(out, message_, 18, kRowTop - 18, 0.7, cv::Scalar(0, 255, 255), 2);
+    }
     shade(out, cv::Rect(0, kRowTop - 2, 240, kRows * kRowH + 4), cv::Scalar(0, 0, 0), 0.62);
     int first = firstRow();
     for (int row = 0; row < kRows; ++row) {
@@ -518,7 +575,7 @@ void Ui::renderScreen(cv::Mat& out, const Snapshot& snap) {
         }
         if (s.lang == 1) {
             std::string lab, val;
-            itemPartsZh(items[i], s, pending, lab, val);
+            itemPartsZh(items[i], s, pending, shared_.haveTemplate(), lab, val);
             cnDraw(out, lab, 32, y + kRowH / 2, fg, 16, false);
             if (!val.empty()) cnDraw(out, val, 134, y + kRowH / 2, fg, 16, false);
         } else {
@@ -528,6 +585,11 @@ void Ui::renderScreen(cv::Mat& out, const Snapshot& snap) {
 }
 
 void Ui::render(cv::Mat& out, const Snapshot& snap) {
+    int learned = shared_.takeLearnResult();
+    if (learned != 0) {
+        message_ = learned > 0 ? "Template saved" : "Learn FAILED";
+        messageUntil_ = nowMs() + 1800;
+    }
     if (snap.preview.empty()) {  // no camera picture yet: logo and a status message on a white screen
         out.create(284, 240, CV_8UC3);
         out.setTo(cv::Scalar(255, 255, 255));

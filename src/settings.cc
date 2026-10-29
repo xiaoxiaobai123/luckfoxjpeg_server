@@ -14,7 +14,7 @@ void Settings::clamp() {
     roundness = clampInt(roundness, 5, 100);
     edge = clampInt(edge, 20, 255);
     exposure = clampInt(exposure, 0, 400);
-    mode = clampInt(mode, 0, 1);
+    mode = clampInt(mode, 0, 2);
     contrast = clampInt(contrast, 5, 120);
     lang = clampInt(lang, 0, 1);
     shape = clampInt(shape, 30, 100);
@@ -23,6 +23,13 @@ void Settings::clamp() {
     roiH = clampInt(roiH, 32, 480);
     roiX = clampInt(roiX, 0, 640 - roiW);
     roiY = clampInt(roiY, 0, 480 - roiH);
+    tplScore = clampInt(tplScore, 30, 99);
+    tplAngle = clampInt(tplAngle, 0, 10);
+    tplShape = clampInt(tplShape, 0, 1);
+    tplW = clampInt(tplW, 16, 400);
+    tplH = clampInt(tplH, 16, 400);
+    tplX = clampInt(tplX, 0, 640 - tplW);
+    tplY = clampInt(tplY, 0, 480 - tplH);
 }
 
 bool Settings::load(const char* path) {
@@ -48,6 +55,13 @@ bool Settings::load(const char* path) {
         else if (!strcmp(key, "roi_y")) roiY = v;
         else if (!strcmp(key, "roi_w")) roiW = v;
         else if (!strcmp(key, "roi_h")) roiH = v;
+        else if (!strcmp(key, "tpl_score")) tplScore = v;
+        else if (!strcmp(key, "tpl_angle")) tplAngle = v;
+        else if (!strcmp(key, "tpl_shape")) tplShape = v;
+        else if (!strcmp(key, "tpl_x")) tplX = v;
+        else if (!strcmp(key, "tpl_y")) tplY = v;
+        else if (!strcmp(key, "tpl_w")) tplW = v;
+        else if (!strcmp(key, "tpl_h")) tplH = v;
     }
     fclose(f);
     clamp();
@@ -60,15 +74,17 @@ bool Settings::save(const char* path) const {
     FILE* f = fopen(tmp, "w");
     if (!f) return false;
     fprintf(f, "mode=%d\ntarget=%d\nmin_dia=%d\nmax_dia=%d\nroundness=%d\nedge=%d\ncontrast=%d\nshape=%d\n"
-               "exposure=%d\ngain=%d\nroi_x=%d\nroi_y=%d\nroi_w=%d\nroi_h=%d\nlang=%d\n",
-            mode, target, minDia, maxDia, roundness, edge, contrast, shape, exposure, gain, roiX, roiY, roiW, roiH, lang);
+               "exposure=%d\ngain=%d\nroi_x=%d\nroi_y=%d\nroi_w=%d\nroi_h=%d\nlang=%d\n"
+               "tpl_score=%d\ntpl_angle=%d\ntpl_shape=%d\ntpl_x=%d\ntpl_y=%d\ntpl_w=%d\ntpl_h=%d\n",
+            mode, target, minDia, maxDia, roundness, edge, contrast, shape, exposure, gain, roiX, roiY, roiW, roiH, lang,
+            tplScore, tplAngle, tplShape, tplX, tplY, tplW, tplH);
     fflush(f);
     fsync(fileno(f));
     bool ok = (fclose(f) == 0);
     return ok && rename(tmp, path) == 0;
 }
 
-SharedSettings::SharedSettings() : ver_(0) { pthread_mutex_init(&m_, NULL); }
+SharedSettings::SharedSettings() : ver_(0), learnReq_(false), learnRes_(0), haveTpl_(false) { pthread_mutex_init(&m_, NULL); }
 
 Settings SharedSettings::get() {
     pthread_mutex_lock(&m_);
@@ -90,4 +106,45 @@ unsigned SharedSettings::version() {
     unsigned v = ver_;
     pthread_mutex_unlock(&m_);
     return v;
+}
+
+void SharedSettings::requestLearn() {
+    pthread_mutex_lock(&m_);
+    learnReq_ = true;
+    pthread_mutex_unlock(&m_);
+}
+
+bool SharedSettings::takeLearn() {
+    pthread_mutex_lock(&m_);
+    bool r = learnReq_;
+    learnReq_ = false;
+    pthread_mutex_unlock(&m_);
+    return r;
+}
+
+void SharedSettings::setLearnResult(int r) {
+    pthread_mutex_lock(&m_);
+    learnRes_ = r;
+    pthread_mutex_unlock(&m_);
+}
+
+int SharedSettings::takeLearnResult() {
+    pthread_mutex_lock(&m_);
+    int r = learnRes_;
+    learnRes_ = 0;
+    pthread_mutex_unlock(&m_);
+    return r;
+}
+
+void SharedSettings::setHaveTemplate(bool on) {
+    pthread_mutex_lock(&m_);
+    haveTpl_ = on;
+    pthread_mutex_unlock(&m_);
+}
+
+bool SharedSettings::haveTemplate() {
+    pthread_mutex_lock(&m_);
+    bool r = haveTpl_;
+    pthread_mutex_unlock(&m_);
+    return r;
 }
