@@ -125,11 +125,12 @@ MatchResult tplMatch(const cv::Mat& gray, const Settings& s, const Template& t, 
         cv::matchTemplate(sc, rotated(tc, bestAngle, false), res, cv::TM_CCOEFF_NORMED);
         cv::patchNaNs(res, -1.0);
         const int rx = std::max(2, tc.cols / 2), ry = std::max(2, tc.rows / 2);  // no second peak this close to a found one
+        const cv::Mat rt = rotated(t.img, bestAngle, false), rm = rotated(mask, bestAngle, true);  // once, not per peak
         for (int n = 0; n < 30; ++n) {
             double mx = -1;
             cv::Point pk;
             cv::minMaxLoc(res, NULL, &mx, NULL, &pk);
-            if (mx < minScore / 100.0 - 0.1) break;  // the map is the coarse one: allow some slack, the check below is exact
+            if (mx < minScore / 100.0 - 0.05) break;  // the map is the coarse one: allow some slack, the check below is exact
             cv::Rect sup(pk.x - rx, pk.y - ry, rx * 2 + 1, ry * 2 + 1);
             sup &= cv::Rect(0, 0, res.cols, res.rows);
             res(sup).setTo(-1.0);
@@ -137,14 +138,9 @@ MatchResult tplMatch(const cv::Mat& gray, const Settings& s, const Template& t, 
             int wy = std::min(std::max(pk.y * f - 4, 0), search.rows - t.img.rows);
             cv::Rect win(wx, wy, std::min(search.cols - wx, t.img.cols + 9), std::min(search.rows - wy, t.img.rows + 9));
             cv::Mat ws = search(win);
-            double bv = -2;
-            cv::Point bl;
-            const double steps[3] = {0.0, -0.5, 0.5};
-            for (int i = 0; i < (A == 0 ? 1 : 3); ++i) {
-                cv::Point loc;
-                double v = matchOnce(ws, rotated(t.img, bestAngle + steps[i], false), rotated(mask, bestAngle + steps[i], true), circ, loc);
-                if (v > bv) { bv = v; bl = cv::Point(loc.x + wx, loc.y + wy); }
-            }
+            cv::Point loc;
+            double bv = matchOnce(ws, rt, rm, circ, loc);
+            cv::Point bl(loc.x + wx, loc.y + wy);
             if (bv * 100.0 >= minScore)
                 all->push_back(cv::Point2f(roi.x + bl.x + t.img.cols / 2.0f, roi.y + bl.y + t.img.rows / 2.0f));
         }
