@@ -13,6 +13,7 @@ struct Snapshot {
     cv::Mat preview;                 // 240x180 BGR camera picture: the whole frame scaled to the screen width
     std::vector<cv::Vec3f> circles;  // in preview pixels (centre x, centre y, radius)
     int count = 0;
+    std::vector<float> matchScores;  // template mode: score of every marker in "circles", same order (numbered on the screen)
     double matchScore = -1;          // template mode: best score of the last match (-1 none)
     int result = -1;                 // -1 none yet, 0 NG, 1 OK, 2 error
     double fps = 0;

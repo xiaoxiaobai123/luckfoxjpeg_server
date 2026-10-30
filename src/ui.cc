@@ -477,9 +477,24 @@ void Ui::renderScreen(cv::Mat& out, const Snapshot& snap) {
         else cv::rectangle(out, rt, cv::Scalar(255, 255, 0), 1);
     }
 
-    if (menu_ && s.mode == 2 && snap.matchScore >= 0 && !snap.preview.empty()) {  // best score next to the count in the badge
-        snprintf(b, sizeof(b), "score %.0f  min %d", snap.matchScore, s.tplScore);
-        textOutline(out, b, 8, kHeaderH + 18, 0.4, cv::Scalar(255, 255, 255), 1);
+    if (menu_ && s.mode == 2 && !snap.preview.empty() && !snap.matchScores.empty()) {
+        // every marker gets its number, and the scores are listed in the corner: "1:99  2:97 ..." (4 per line)
+        const size_t n = snap.matchScores.size();
+        for (size_t i = 0; i < snap.circles.size() && i < n; ++i) {
+            snprintf(b, sizeof(b), "%d", (int)i + 1);
+            cv::Size ts = cv::getTextSize(b, cv::FONT_HERSHEY_SIMPLEX, 0.4, 1, NULL);
+            textOutline(out, b, cvRound(snap.circles[i][0]) - ts.width / 2, cvRound(snap.circles[i][1]) + yOff + ts.height / 2,
+                        0.4, cv::Scalar(255, 255, 255), 1);
+        }
+        const size_t shown = std::min<size_t>(n, 12);
+        for (size_t i = 0; i < shown; ++i) {
+            snprintf(b, sizeof(b), "%d:%.0f", (int)i + 1, snap.matchScores[i]);
+            textOutline(out, b, 8 + (int)(i % 4) * 56, kHeaderH + 16 + (int)(i / 4) * 13, 0.36, cv::Scalar(255, 255, 255), 1);
+        }
+        if (n > shown) {
+            snprintf(b, sizeof(b), "+%d", (int)(n - shown));
+            textOutline(out, b, 8 + 3 * 56 + 24, kHeaderH + 16 + 2 * 13, 0.36, cv::Scalar(255, 255, 255), 1);
+        }
     }
 
     if (!menu_) {

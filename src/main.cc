@@ -233,6 +233,7 @@ static int countDarkHoles(const cv::Mat& gray, const Settings& s, std::vector<cv
 static Template g_tpl;
 static std::string g_tplPath;
 static bool g_markTpl = false;  // the markers are template matches (drawn in another colour)
+static std::vector<float> g_matchScores;  // score of each marker, in the order of the markers
 static double g_matchScore = -1;  // best score of the last template match (shown next to the count)
 static bool g_matchFound = true;  // false: template mode without a usable template (not learned yet, or bigger than the area)
 
@@ -240,7 +241,9 @@ static int detect(const cv::Mat& gray, const Settings& s, std::vector<cv::Vec3f>
     g_markTpl = s.mode == 2;
     if (s.mode == 2) {  // the "count" is the number of places that match well enough (a single place: 0 or 1)
         std::vector<cv::Point2f> pts;
-        MatchResult m = tplMatch(gray, s, g_tpl, s.tplCount == 1 ? NULL : &pts, s.tplScore);
+        std::vector<float> sc;
+        MatchResult m = tplMatch(gray, s, g_tpl, s.tplCount == 1 ? NULL : &pts, s.tplScore, &sc);
+        g_matchScores.clear();
         g_matchFound = m.found;
         g_matchScore = m.found ? m.score : -1;
         circles.clear();
@@ -248,9 +251,22 @@ static int detect(const cv::Mat& gray, const Settings& s, std::vector<cv::Vec3f>
         const float rr = std::max(g_tpl.img.cols, g_tpl.img.rows) * 0.25f;  // half-size camera pixels, like the other modes
         if (s.tplCount == 1) {  // the marker shows where the best place is, even when it is too weak to count
             circles.push_back(cv::Vec3f(m.center.x * 0.5f, m.center.y * 0.5f, rr));
+            g_matchScores.push_back((float)m.score);
             return m.score >= s.tplScore ? 1 : 0;
         }
-        for (size_t i = 0; i < pts.size(); ++i) circles.push_back(cv::Vec3f(pts[i].x * 0.5f, pts[i].y * 0.5f, rr));
+        // number the places from top to bottom, left to right (rows are about one template high), so a number stays
+        // with its place from picture to picture
+        std::vector<size_t> ord(pts.size());
+        for (size_t i = 0; i < ord.size(); ++i) ord[i] = i;
+        const float rowH = std::max(8.0f, g_tpl.img.rows * 0.6f);
+        std::sort(ord.begin(), ord.end(), [&](size_t a, size_t b) {
+            int ra = (int)(pts[a].y / rowH), rb = (int)(pts[b].y / rowH);
+            return ra != rb ? ra < rb : pts[a].x < pts[b].x;
+        });
+        for (size_t k = 0; k < ord.size(); ++k) {
+            circles.push_back(cv::Vec3f(pts[ord[k]].x * 0.5f, pts[ord[k]].y * 0.5f, rr));
+            g_matchScores.push_back(sc[ord[k]]);
+        }
         return (int)pts.size();
     }
     return s.mode == 1 ? countDarkHoles(gray, s, circles) : countCircles(gray, s, circles);
@@ -850,6 +866,7 @@ int main(int argc, char** argv) {
         }
         snap.count = count;
         snap.matchScore = s.mode == 2 ? g_matchScore : -1;
+        if (s.mode == 2) snap.matchScores = g_matchScores;
         {
             static SysStats sysNow;
             refreshSysStats(sysNow);

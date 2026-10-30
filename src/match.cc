@@ -72,7 +72,7 @@ bool tplLoad(Template& t, const std::string& path) {
     return true;
 }
 
-MatchResult tplMatch(const cv::Mat& gray, const Settings& s, const Template& t, std::vector<cv::Point2f>* all, double minScore) {
+MatchResult tplMatch(const cv::Mat& gray, const Settings& s, const Template& t, std::vector<cv::Point2f>* all, double minScore, std::vector<float>* allScore) {
     MatchResult r;
     if (!t.valid()) return r;
     cv::Rect roi(s.roiX, s.roiY, s.roiW, s.roiH);
@@ -121,6 +121,7 @@ MatchResult tplMatch(const cv::Mat& gray, const Settings& s, const Template& t, 
 
     if (all) {  // every place that looks like the template: peaks of one correlation map at the best angle
         all->clear();
+        if (allScore) allScore->clear();
         cv::Mat res;
         cv::matchTemplate(sc, rotated(tc, bestAngle, false), res, cv::TM_CCOEFF_NORMED);
         cv::patchNaNs(res, -1.0);
@@ -141,8 +142,10 @@ MatchResult tplMatch(const cv::Mat& gray, const Settings& s, const Template& t, 
             cv::Point loc;
             double bv = matchOnce(ws, rt, rm, circ, loc);
             cv::Point bl(loc.x + wx, loc.y + wy);
-            if (bv * 100.0 >= minScore)
+            if (bv * 100.0 >= minScore) {
                 all->push_back(cv::Point2f(roi.x + bl.x + t.img.cols / 2.0f, roi.y + bl.y + t.img.rows / 2.0f));
+                if (allScore) allScore->push_back((float)std::min(100.0, bv * 100.0));
+            }
         }
     }
 

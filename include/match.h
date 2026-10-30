@@ -24,6 +24,6 @@ bool tplSave(const Template& t, const std::string& path);
 bool tplLoad(Template& t, const std::string& path);
 // all != NULL: also list every place (camera pixels, at most 30) that scores at least minScore, best first
 MatchResult tplMatch(const cv::Mat& gray, const Settings& s, const Template& t, std::vector<cv::Point2f>* all = NULL,
-                     double minScore = 0);
+                     double minScore = 0, std::vector<float>* allScore = NULL);
 
 #endif // MATCH_H
