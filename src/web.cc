@@ -32,6 +32,9 @@ volatile bool g_run = false;
 int g_listen = -1;
 pthread_t g_serverThread;
 
+volatile int g_rawWant = 0;  // /raw.png asks for one frame; the capture loop answers with webPublishRaw
+std::vector<unsigned char> g_rawPng;
+
 SharedSettings* g_settings = NULL;  // set by webSetControl: the page can read and change the settings
 std::string g_confPath, g_tplPath;
 pthread_mutex_t g_setLock = PTHREAD_MUTEX_INITIALIZER;  // one change at a time (read - modify - write)
@@ -144,6 +147,17 @@ void* clientThread(void* arg) {
             size_t b = 11, e = line.find(' ', b);
             bool ok = keysPushByName(line.substr(b, e == std::string::npos ? e : e - b));
             sendText(fd, "text/plain", ok ? "ok" : "unknown key");
+        } else if (line.compare(0, 9, "GET /raw.") == 0) {
+            pthread_mutex_lock(&g_setLock);
+            g_rawPng.clear();
+            g_rawWant = 1;
+            pthread_mutex_unlock(&g_setLock);
+            for (int i = 0; i < 300 && g_rawWant; ++i) usleep(10000);
+            pthread_mutex_lock(&g_setLock);
+            std::string png(g_rawPng.begin(), g_rawPng.end());
+            pthread_mutex_unlock(&g_setLock);
+            if (png.empty()) sendText(fd, "text/plain", "no frame", "503 Service Unavailable");
+            else sendText(fd, "image/png", png);
         } else if (g_settings && line.compare(0, 14, "GET /settings ") == 0) {
             sendText(fd, "application/json", settingsJson());
         } else if (g_settings && line.compare(0, 9, "GET /set?") == 0) {
@@ -214,6 +228,17 @@ void webStop() {
 bool webWantsCam() { return g_cam.clients > 0; }
 bool webWantsUi() { return g_ui.clients > 0; }
 void webPublishCam(const cv::Mat& bgr) { publish(g_cam, bgr, 70); }
+
+bool webWantsRaw() { return g_rawWant != 0; }
+
+void webPublishRaw(const cv::Mat& gray) {
+    std::vector<unsigned char> png;
+    cv::imencode(".png", gray, png);
+    pthread_mutex_lock(&g_setLock);
+    g_rawPng.swap(png);
+    pthread_mutex_unlock(&g_setLock);
+    g_rawWant = 0;
+}
 
 void webPublishUi(const cv::Mat& bgr) {
     cv::Mat big;

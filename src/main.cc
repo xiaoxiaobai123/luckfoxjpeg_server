@@ -786,6 +786,8 @@ int main(int argc, char** argv) {
         void* base = RK_MPI_MB_Handle2VirAddr(frame.stVFrame.pMbBlk);
         cv::Mat gray(CAP_HEIGHT, CAP_WIDTH, CV_8UC1, base, frame.stVFrame.u32VirWidth);
 
+        if (webWantsRaw()) webPublishRaw(gray);
+
         Settings s = g_shared.get();
         if (s.exposure != appliedExposure || s.gain != appliedGain) {
             applyExposure(s.exposure, s.gain);

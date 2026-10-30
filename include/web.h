@@ -18,6 +18,8 @@ void webStop();
 bool webWantsCam();  // at least one browser is watching /cam
 bool webWantsUi();
 void webPublishCam(const cv::Mat& bgr);
+bool webWantsRaw();  // /raw.png is waiting for the next camera frame, unprocessed and lossless
+void webPublishRaw(const cv::Mat& gray);
 void webPublishUi(const cv::Mat& bgr);
 
 #endif // WEB_H
