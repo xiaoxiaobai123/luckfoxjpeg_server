@@ -482,7 +482,8 @@ void Ui::renderScreen(cv::Mat& out, const Snapshot& snap) {
         const size_t n = snap.matchScores.size();
         for (size_t i = 0; i < snap.circles.size() && i < n; ++i) {
             snprintf(b, sizeof(b), "%d", (int)i + 1);
-            cv::Size ts = cv::getTextSize(b, cv::FONT_HERSHEY_SIMPLEX, 0.4, 1, NULL);
+            int tb = 0;
+            cv::Size ts = cv::getTextSize(b, cv::FONT_HERSHEY_SIMPLEX, 0.4, 1, &tb);
             textOutline(out, b, cvRound(snap.circles[i][0]) - ts.width / 2, cvRound(snap.circles[i][1]) + yOff + ts.height / 2,
                         0.4, cv::Scalar(255, 255, 255), 1);
         }
