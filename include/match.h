@@ -1,6 +1,7 @@
 #ifndef MATCH_H
 #define MATCH_H
 
+#include <vector>
 #include <opencv2/core/core.hpp>
 #include <string>
 #include "settings.h"
@@ -21,6 +22,8 @@ struct MatchResult {
 bool tplLearn(const cv::Mat& gray, const Settings& s, Template& t);  // cut the template area out of the frame
 bool tplSave(const Template& t, const std::string& path);
 bool tplLoad(Template& t, const std::string& path);
-MatchResult tplMatch(const cv::Mat& gray, const Settings& s, const Template& t);
+// all != NULL: also list every place (camera pixels, at most 30) that scores at least minScore, best first
+MatchResult tplMatch(const cv::Mat& gray, const Settings& s, const Template& t, std::vector<cv::Point2f>* all = NULL,
+                     double minScore = 0);
 
 #endif // MATCH_H

@@ -233,17 +233,25 @@ static int countDarkHoles(const cv::Mat& gray, const Settings& s, std::vector<cv
 static Template g_tpl;
 static std::string g_tplPath;
 static bool g_markTpl = false;  // the markers are template matches (drawn in another colour)
+static double g_matchScore = -1;  // best score of the last template match (shown next to the count)
 static bool g_matchFound = true;  // false: template mode without a usable template (not learned yet, or bigger than the area)
 
 static int detect(const cv::Mat& gray, const Settings& s, std::vector<cv::Vec3f>& circles) {
     g_markTpl = s.mode == 2;
-    if (s.mode == 2) {  // the "count" is the match score, 0..100
-        MatchResult m = tplMatch(gray, s, g_tpl);
+    if (s.mode == 2) {  // the "count" is the number of places that match well enough (a single place: 0 or 1)
+        std::vector<cv::Point2f> pts;
+        MatchResult m = tplMatch(gray, s, g_tpl, s.tplCount == 1 ? NULL : &pts, s.tplScore);
         g_matchFound = m.found;
+        g_matchScore = m.found ? m.score : -1;
         circles.clear();
-        if (m.found)  // circle around the place where it was found (half-size camera pixels, like the other modes)
-            circles.push_back(cv::Vec3f(m.center.x * 0.5f, m.center.y * 0.5f, std::max(g_tpl.img.cols, g_tpl.img.rows) * 0.25f));
-        return cvRound(m.score);
+        if (!m.found) return 0;
+        const float rr = std::max(g_tpl.img.cols, g_tpl.img.rows) * 0.25f;  // half-size camera pixels, like the other modes
+        if (s.tplCount == 1) {  // the marker shows where the best place is, even when it is too weak to count
+            circles.push_back(cv::Vec3f(m.center.x * 0.5f, m.center.y * 0.5f, rr));
+            return m.score >= s.tplScore ? 1 : 0;
+        }
+        for (size_t i = 0; i < pts.size(); ++i) circles.push_back(cv::Vec3f(pts[i].x * 0.5f, pts[i].y * 0.5f, rr));
+        return (int)pts.size();
     }
     return s.mode == 1 ? countDarkHoles(gray, s, circles) : countCircles(gray, s, circles);
 }
@@ -795,7 +803,7 @@ int main(int argc, char** argv) {
                     setOutputs(0, 0, 1);
                 } else {
                     // at least the target number (or the match score): OK (front), less: NG (back)
-                    result = (count >= (s.mode == 2 ? s.tplScore : s.target)) ? 1 : 0;
+                    result = (count >= (s.mode == 2 ? std::max(1, s.tplCount) : s.target)) ? 1 : 0;
                     setOutputs(result == 1, result == 0, 0);
                 }
                 g_trigBusy = false;
@@ -841,6 +849,7 @@ int main(int argc, char** argv) {
             }
         }
         snap.count = count;
+        snap.matchScore = s.mode == 2 ? g_matchScore : -1;
         {
             static SysStats sysNow;
             refreshSysStats(sysNow);

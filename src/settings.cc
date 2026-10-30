@@ -25,6 +25,7 @@ void Settings::clamp() {
     roiY = clampInt(roiY, 0, 480 - roiH);
     tplScore = clampInt(tplScore, 30, 99);
     tplAngle = clampInt(tplAngle, 0, 10);
+    tplCount = clampInt(tplCount, 0, 30);
     tplShape = clampInt(tplShape, 0, 1);
     tplW = clampInt(tplW, 16, 400);
     tplH = clampInt(tplH, 16, 400);
@@ -57,6 +58,7 @@ bool Settings::load(const char* path) {
         else if (!strcmp(key, "roi_h")) roiH = v;
         else if (!strcmp(key, "tpl_score")) tplScore = v;
         else if (!strcmp(key, "tpl_angle")) tplAngle = v;
+        else if (!strcmp(key, "tpl_count")) tplCount = v;
         else if (!strcmp(key, "tpl_shape")) tplShape = v;
         else if (!strcmp(key, "tpl_x")) tplX = v;
         else if (!strcmp(key, "tpl_y")) tplY = v;
@@ -75,9 +77,9 @@ bool Settings::save(const char* path) const {
     if (!f) return false;
     fprintf(f, "mode=%d\ntarget=%d\nmin_dia=%d\nmax_dia=%d\nroundness=%d\nedge=%d\ncontrast=%d\nshape=%d\n"
                "exposure=%d\ngain=%d\nroi_x=%d\nroi_y=%d\nroi_w=%d\nroi_h=%d\nlang=%d\n"
-               "tpl_score=%d\ntpl_angle=%d\ntpl_shape=%d\ntpl_x=%d\ntpl_y=%d\ntpl_w=%d\ntpl_h=%d\n",
+               "tpl_score=%d\ntpl_count=%d\ntpl_angle=%d\ntpl_shape=%d\ntpl_x=%d\ntpl_y=%d\ntpl_w=%d\ntpl_h=%d\n",
             mode, target, minDia, maxDia, roundness, edge, contrast, shape, exposure, gain, roiX, roiY, roiW, roiH, lang,
-            tplScore, tplAngle, tplShape, tplX, tplY, tplW, tplH);
+            tplScore, tplCount, tplAngle, tplShape, tplX, tplY, tplW, tplH);
     fflush(f);
     fsync(fileno(f));
     bool ok = (fclose(f) == 0);

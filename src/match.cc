@@ -72,7 +72,7 @@ bool tplLoad(Template& t, const std::string& path) {
     return true;
 }
 
-MatchResult tplMatch(const cv::Mat& gray, const Settings& s, const Template& t) {
+MatchResult tplMatch(const cv::Mat& gray, const Settings& s, const Template& t, std::vector<cv::Point2f>* all, double minScore) {
     MatchResult r;
     if (!t.valid()) return r;
     cv::Rect roi(s.roiX, s.roiY, s.roiW, s.roiH);
@@ -117,6 +117,37 @@ MatchResult tplMatch(const cv::Mat& gray, const Settings& s, const Template& t) 
             if (v > fineBest) { fineBest = v; fineAngle = a; fineLoc = cv::Point(loc.x + wx, loc.y + wy); }
         }
         best = fineBest; bestAngle = fineAngle; bestLoc = fineLoc;
+    }
+
+    if (all) {  // every place that looks like the template: peaks of one correlation map at the best angle
+        all->clear();
+        cv::Mat res;
+        cv::matchTemplate(sc, rotated(tc, bestAngle, false), res, cv::TM_CCOEFF_NORMED);
+        cv::patchNaNs(res, -1.0);
+        const int rx = std::max(2, tc.cols / 2), ry = std::max(2, tc.rows / 2);  // no second peak this close to a found one
+        for (int n = 0; n < 30; ++n) {
+            double mx = -1;
+            cv::Point pk;
+            cv::minMaxLoc(res, NULL, &mx, NULL, &pk);
+            if (mx < minScore / 100.0 - 0.1) break;  // the map is the coarse one: allow some slack, the check below is exact
+            cv::Rect sup(pk.x - rx, pk.y - ry, rx * 2 + 1, ry * 2 + 1);
+            sup &= cv::Rect(0, 0, res.cols, res.rows);
+            res(sup).setTo(-1.0);
+            int wx = std::min(std::max(pk.x * f - 4, 0), search.cols - t.img.cols);
+            int wy = std::min(std::max(pk.y * f - 4, 0), search.rows - t.img.rows);
+            cv::Rect win(wx, wy, std::min(search.cols - wx, t.img.cols + 9), std::min(search.rows - wy, t.img.rows + 9));
+            cv::Mat ws = search(win);
+            double bv = -2;
+            cv::Point bl;
+            const double steps[3] = {0.0, -0.5, 0.5};
+            for (int i = 0; i < (A == 0 ? 1 : 3); ++i) {
+                cv::Point loc;
+                double v = matchOnce(ws, rotated(t.img, bestAngle + steps[i], false), rotated(mask, bestAngle + steps[i], true), circ, loc);
+                if (v > bv) { bv = v; bl = cv::Point(loc.x + wx, loc.y + wy); }
+            }
+            if (bv * 100.0 >= minScore)
+                all->push_back(cv::Point2f(roi.x + bl.x + t.img.cols / 2.0f, roi.y + bl.y + t.img.rows / 2.0f));
+        }
     }
 
     r.found = true;

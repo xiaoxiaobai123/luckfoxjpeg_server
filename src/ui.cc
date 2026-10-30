@@ -17,7 +17,7 @@ enum Item {
     IT_ROUND, IT_EDGE,        // circle mode only
     IT_CONTRAST, IT_SHAPE,    // dark-hole mode only
     IT_EXPOSURE, IT_GAIN, IT_AX, IT_AY, IT_AW, IT_AH,
-    IT_TSCORE, IT_TANGLE, IT_TSHAPE, IT_TX, IT_TY, IT_TW, IT_TH, IT_LEARN,  // template mode only
+    IT_TSCORE, IT_TCOUNT, IT_TANGLE, IT_TSHAPE, IT_TX, IT_TY, IT_TW, IT_TH, IT_LEARN,  // template mode only
     IT_LANG, IT_SAVE, IT_DISCARD
 };
 
@@ -40,6 +40,7 @@ std::vector<int> visibleItems(int mode) {
     v.push_back(IT_MODE);
     if (mode == 2) {
         v.push_back(IT_TSCORE);
+        v.push_back(IT_TCOUNT);
         v.push_back(IT_TANGLE);
         v.push_back(IT_TSHAPE);
         v.push_back(IT_TX);
@@ -83,6 +84,10 @@ std::string Ui::itemText(int id, const Settings& s) const {
     switch (id) {
     case IT_MODE: snprintf(b, sizeof(b), "Mode      %s", s.mode == 2 ? "Template" : (s.mode == 1 ? "Dark" : "Circle")); break;
     case IT_TSCORE: snprintf(b, sizeof(b), "Match min %d", s.tplScore); break;
+    case IT_TCOUNT:
+        if (s.tplCount == 0) snprintf(b, sizeof(b), "Match cnt any");
+        else snprintf(b, sizeof(b), "Match cnt %d", s.tplCount);
+        break;
     case IT_TANGLE: snprintf(b, sizeof(b), "Rotation  +-%d deg", s.tplAngle); break;
     case IT_TSHAPE: snprintf(b, sizeof(b), "Tpl shape %s", s.tplShape ? "Circle" : "Rect"); break;
     case IT_TX: snprintf(b, sizeof(b), "Tpl x     %d", s.tplX); break;
@@ -141,6 +146,7 @@ void Ui::changeValue(int dir) {
     switch (items[sel_]) {
     case IT_MODE: s.mode = std::min(2, std::max(0, s.mode + dir)); break;
     case IT_TSCORE: s.tplScore += dir * step; break;
+    case IT_TCOUNT: s.tplCount += dir * step; break;
     case IT_TANGLE: s.tplAngle += dir; break;
     case IT_TSHAPE: s.tplShape = s.tplShape ? 0 : 1; break;
     case IT_TX: s.tplX += dir * step * 4; break;
@@ -342,6 +348,7 @@ static void itemPartsZh(int id, const Settings& s, bool savePending, bool haveTp
     switch (id) {
     case IT_MODE: label = "模式"; value = s.mode == 2 ? "模板" : (s.mode == 1 ? "暗孔" : "圆形"); break;
     case IT_TSCORE: label = "匹配分数"; snprintf(b, sizeof(b), "%d", s.tplScore); value = b; break;
+    case IT_TCOUNT: label = "匹配个数"; if (s.tplCount == 0) value = "不限"; else { snprintf(b, sizeof(b), "%d", s.tplCount); value = b; } break;
     case IT_TANGLE: label = "旋转范围"; snprintf(b, sizeof(b), "±%d°", s.tplAngle); value = b; break;
     case IT_TSHAPE: label = "模板形状"; value = s.tplShape ? "圆形" : "矩形"; break;
     case IT_TX: label = "模板 X"; snprintf(b, sizeof(b), "%d", s.tplX); value = b; break;
@@ -428,7 +435,7 @@ void Ui::renderScreen(cv::Mat& out, const Snapshot& snap) {
     Settings s = shared_.get();
     std::vector<int> items = visibleItems(s.mode);
     const cv::Scalar mark = s.mode == 2 ? cv::Scalar(255, 0, 255) : cv::Scalar(0, 255, 0);  // template match: magenta, circles/holes: green
-    const int thr = s.mode == 2 ? s.tplScore : s.target;  // count (holes) or score (template) that means OK
+    const int thr = s.mode == 2 ? std::max(1, s.tplCount) : s.target;  // count of holes / matching places that means OK
     char b[64];
 
     double sc = 0;  // preview pixels per camera pixel
@@ -468,6 +475,11 @@ void Ui::renderScreen(cv::Mat& out, const Snapshot& snap) {
             cv::ellipse(out, cv::Point(rt.x + rt.width / 2, rt.y + rt.height / 2), cv::Size(rt.width / 2, rt.height / 2), 0, 0, 360,
                         cv::Scalar(255, 255, 0), 1, cv::LINE_AA);
         else cv::rectangle(out, rt, cv::Scalar(255, 255, 0), 1);
+    }
+
+    if (menu_ && s.mode == 2 && snap.matchScore >= 0 && !snap.preview.empty()) {  // best score next to the count in the badge
+        snprintf(b, sizeof(b), "score %.0f  min %d", snap.matchScore, s.tplScore);
+        textOutline(out, b, 8, kHeaderH + 18, 0.4, cv::Scalar(255, 255, 255), 1);
     }
 
     if (!menu_) {
@@ -551,21 +563,22 @@ void Ui::renderScreen(cv::Mat& out, const Snapshot& snap) {
     text(out, b, badge.x + (badge.width - ts.width) / 2, badge.y + (badge.height + ts.height) / 2,
          0.55, cv::Scalar(255, 255, 255), 2);
 
-    {  // system load in the header, left and right of the verdict block: CPU/temperature/RAM and time/fps
+    {  // system load in the header, left and right of the verdict block (kept away from the screen edges)
         const cv::Scalar dim(205, 205, 205);
-        const double fs = 0.34;
-        if (snap.tempC >= 0) snprintf(b, sizeof(b), "CPU %.0f%% %.0fC", snap.cpuPct, snap.tempC);
-        else snprintf(b, sizeof(b), "CPU %.0f%%", snap.cpuPct);
-        text(out, b, 4, 12, fs, dim);
+        const double fs = 0.32;
+        const int mL = 9, mR = 231;
+        snprintf(b, sizeof(b), "CPU %.0f%%", snap.cpuPct);
+        text(out, b, mL, 13, fs, dim);
         snprintf(b, sizeof(b), "RAM %.0f/%.0fM", snap.ramUsedMb, snap.ramTotalMb);
-        text(out, b, 4, 25, fs, dim);
-        snprintf(b, sizeof(b), "%.0f ms", snap.detectMs);
+        text(out, b, mL, 25, fs, dim);
         int bs = 0;
+        if (snap.tempC >= 0) snprintf(b, sizeof(b), "%.0f ms  %.0fC", snap.detectMs, snap.tempC);
+        else snprintf(b, sizeof(b), "%.0f ms", snap.detectMs);
         cv::Size t1 = cv::getTextSize(b, cv::FONT_HERSHEY_SIMPLEX, fs, 1, &bs);
-        text(out, b, 236 - t1.width, 12, fs, dim);
+        text(out, b, mR - t1.width, 13, fs, dim);
         snprintf(b, sizeof(b), "%.1f fps", snap.fps);
         cv::Size t2 = cv::getTextSize(b, cv::FONT_HERSHEY_SIMPLEX, fs, 1, &bs);
-        text(out, b, 236 - t2.width, 25, fs, dim);
+        text(out, b, mR - t2.width, 25, fs, dim);
     }
 
     if (nowMs() < messageUntil_) {  // e.g. the result of "Learn"

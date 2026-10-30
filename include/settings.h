@@ -20,6 +20,7 @@ struct Settings {
 
     // template mode: one learned picture is searched in the detection area, OK when it is found with a high score
     int tplScore = 85;    // lowest match score (0..100) that counts as OK
+    int tplCount = 1;     // places that must match: 1 = one, 0 = any number (at least one), up to 30
     int tplAngle = 3;     // the template may be turned by up to this many degrees either way
     int tplShape = 0;     // 0 = rectangle, 1 = circle (ellipse inscribed in the rectangle)
     int tplX = 280, tplY = 200, tplW = 64, tplH = 64;  // where the template is cut out of the picture when learned
