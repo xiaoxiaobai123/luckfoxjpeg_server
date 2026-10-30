@@ -11,7 +11,8 @@ body{font-family:sans-serif;background:#16181d;color:#dde;margin:10px}
 h3{margin:4px 0 8px}
 .wrap{display:flex;flex-wrap:wrap;gap:14px;align-items:flex-start}
 #cam{position:relative;width:640px;max-width:100%;line-height:0}
-#cam img,#cam canvas{width:100%;display:block;background:#000}
+#cam img,#cam canvas{width:100%;display:block}
+#cam img{background:#000}
 #cam canvas{position:absolute;left:0;top:0;cursor:crosshair}
 .side{min-width:300px}
 fieldset{border:1px solid #3a3f4b;border-radius:6px;margin:0 0 10px;padding:6px 10px}
