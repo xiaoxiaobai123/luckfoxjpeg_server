@@ -427,6 +427,7 @@ void Ui::renderScreen(cv::Mat& out, const Snapshot& snap) {
     out.setTo(cv::Scalar(24, 24, 24));
     Settings s = shared_.get();
     std::vector<int> items = visibleItems(s.mode);
+    const cv::Scalar mark = s.mode == 2 ? cv::Scalar(255, 0, 255) : cv::Scalar(0, 255, 0);  // template match: magenta, circles/holes: green
     const int thr = s.mode == 2 ? s.tplScore : s.target;  // count (holes) or score (template) that means OK
     char b[64];
 
@@ -443,7 +444,7 @@ void Ui::renderScreen(cv::Mat& out, const Snapshot& snap) {
         if (snap.result >= 0)
             for (size_t i = 0; i < snap.roiCircles.size(); ++i)
                 cv::circle(out, cv::Point(cvRound(snap.roiCircles[i][0]) + x0, cvRound(snap.roiCircles[i][1]) + y0),
-                           cvRound(snap.roiCircles[i][2]), cv::Scalar(0, 255, 0), 2, cv::LINE_AA);
+                           cvRound(snap.roiCircles[i][2]), mark, 2, cv::LINE_AA);
     } else if (!snap.preview.empty()) {
         sc = snap.preview.cols / 640.0;
         yOff = kHeaderH + 4;
@@ -452,7 +453,7 @@ void Ui::renderScreen(cv::Mat& out, const Snapshot& snap) {
         if (menu_ || snap.result >= 0)
             for (size_t i = 0; i < snap.circles.size(); ++i)
                 cv::circle(out, cv::Point(cvRound(snap.circles[i][0]), cvRound(snap.circles[i][1]) + yOff),
-                           cvRound(snap.circles[i][2]), cv::Scalar(0, 255, 0), 2, cv::LINE_AA);
+                           cvRound(snap.circles[i][2]), mark, 2, cv::LINE_AA);
     }
 
     // detection area: only what is inside the frame is looked at (menu only: the run screen shows just that area)

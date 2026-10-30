@@ -232,9 +232,11 @@ static int countDarkHoles(const cv::Mat& gray, const Settings& s, std::vector<cv
 // Template mode: the learned picture (kept in RAM, saved next to the settings file so it survives a restart).
 static Template g_tpl;
 static std::string g_tplPath;
+static bool g_markTpl = false;  // the markers are template matches (drawn in another colour)
 static bool g_matchFound = true;  // false: template mode without a usable template (not learned yet, or bigger than the area)
 
 static int detect(const cv::Mat& gray, const Settings& s, std::vector<cv::Vec3f>& circles) {
+    g_markTpl = s.mode == 2;
     if (s.mode == 2) {  // the "count" is the match score, 0..100
         MatchResult m = tplMatch(gray, s, g_tpl);
         g_matchFound = m.found;
@@ -351,7 +353,7 @@ static void publishCamView(const cv::Mat& gray, const std::vector<cv::Vec3f>& ci
     double k = (double)gray.cols / WORK_W;
     for (size_t i = 0; i < circles.size(); ++i)
         cv::circle(vis, cv::Point(cvRound(circles[i][0] * k), cvRound(circles[i][1] * k)),
-                   cvRound(circles[i][2] * k), cv::Scalar(0, 255, 0), 2);
+                   cvRound(circles[i][2] * k), g_markTpl ? cv::Scalar(255, 0, 255) : cv::Scalar(0, 255, 0), 2);
     char t[96];
     const char* r = result == 1 ? "OK" : (result == 0 ? "NG" : (result == 2 ? "ERR" : "--"));
     snprintf(t, sizeof(t), "circles=%d  %s", count, r);
