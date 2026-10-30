@@ -94,22 +94,23 @@ MatchResult tplMatch(const cv::Mat& gray, const Settings& s, const Template& t) 
     }
     double best = -2, bestAngle = 0;
     cv::Point bestLoc;
-    for (int a = -A; a <= A; ++a) {
+    const int stepA = A >= 3 ? 2 : 1;  // coarse step; the fine stage below corrects up to +-1 degree
+    for (int a = -A; a <= A; a += stepA) {
         cv::Point loc;
-        double v = matchOnce(sc, rotated(tc, a, false), rotated(mc, a, true), circ, loc);
+        double v = matchOnce(sc, rotated(tc, a, false), cv::Mat(), false, loc);  // searching is always unmasked (fast)
         if (v > best) { best = v; bestAngle = a; bestLoc = loc; }
     }
 
     // 2. fine: full size, a small window around the coarse position, half-degree steps
-    if (f > 1) {
+    {
         int wx = std::min(std::max(bestLoc.x * f - 4, 0), search.cols - t.img.cols);
         int wy = std::min(std::max(bestLoc.y * f - 4, 0), search.rows - t.img.rows);
         cv::Rect win(wx, wy, std::min(search.cols - wx, t.img.cols + 9), std::min(search.rows - wy, t.img.rows + 9));
         cv::Mat ws = search(win);
         double fineBest = -2, fineAngle = bestAngle;
         cv::Point fineLoc = bestLoc;
-        const double steps[3] = {0.0, -0.5, 0.5};
-        for (int i = 0; i < (A == 0 ? 1 : 3); ++i) {
+        const double steps[5] = {0.0, -0.5, 0.5, -1.0, 1.0};
+        for (int i = 0; i < (A == 0 ? 1 : (stepA == 2 ? 5 : 3)); ++i) {
             double a = bestAngle + steps[i];
             cv::Point loc;
             double v = matchOnce(ws, rotated(t.img, a, false), rotated(mask, a, true), circ, loc);
