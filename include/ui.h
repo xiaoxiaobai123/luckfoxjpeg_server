@@ -16,6 +16,7 @@ struct Snapshot {
     int result = -1;                 // -1 none yet, 0 NG, 1 OK, 2 error
     double fps = 0;
     double detectMs = 0;
+    double cpuPct = 0, ramUsedMb = 0, ramTotalMb = 0, tempC = -1;  // system load, shown in the menu header
     double totalMs = 0;              // from the PLC trigger edge to the result
     int trigNo = 0;                  // number of the trigger (counts up, shows that a trigger really arrived)
     cv::Mat roiView;                 // the detection area enlarged to fit the screen (empty when it is the whole picture)

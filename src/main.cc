@@ -841,6 +841,11 @@ int main(int argc, char** argv) {
             }
         }
         snap.count = count;
+        {
+            static SysStats sysNow;
+            refreshSysStats(sysNow);
+            snap.cpuPct = sysNow.cpuPct; snap.ramUsedMb = sysNow.memUsedMb; snap.ramTotalMb = sysNow.memTotalMb; snap.tempC = sysNow.tempC;
+        }
         snap.result = result;
         snap.fps = fps;
         snap.detectMs = detectMs;

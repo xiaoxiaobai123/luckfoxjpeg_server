@@ -551,6 +551,23 @@ void Ui::renderScreen(cv::Mat& out, const Snapshot& snap) {
     text(out, b, badge.x + (badge.width - ts.width) / 2, badge.y + (badge.height + ts.height) / 2,
          0.55, cv::Scalar(255, 255, 255), 2);
 
+    {  // system load in the header, left and right of the verdict block: CPU/temperature/RAM and time/fps
+        const cv::Scalar dim(205, 205, 205);
+        const double fs = 0.34;
+        if (snap.tempC >= 0) snprintf(b, sizeof(b), "CPU %.0f%% %.0fC", snap.cpuPct, snap.tempC);
+        else snprintf(b, sizeof(b), "CPU %.0f%%", snap.cpuPct);
+        text(out, b, 4, 12, fs, dim);
+        snprintf(b, sizeof(b), "RAM %.0f/%.0fM", snap.ramUsedMb, snap.ramTotalMb);
+        text(out, b, 4, 25, fs, dim);
+        snprintf(b, sizeof(b), "%.0f ms", snap.detectMs);
+        int bs = 0;
+        cv::Size t1 = cv::getTextSize(b, cv::FONT_HERSHEY_SIMPLEX, fs, 1, &bs);
+        text(out, b, 236 - t1.width, 12, fs, dim);
+        snprintf(b, sizeof(b), "%.1f fps", snap.fps);
+        cv::Size t2 = cv::getTextSize(b, cv::FONT_HERSHEY_SIMPLEX, fs, 1, &bs);
+        text(out, b, 236 - t2.width, 25, fs, dim);
+    }
+
     if (nowMs() < messageUntil_) {  // e.g. the result of "Learn"
         shade(out, cv::Rect(0, kRowTop - 40, 240, 30), cv::Scalar(0, 0, 0), 0.75);
         if (s.lang == 1) cnDraw(out, messageZh(message_), 18, kRowTop - 25, cv::Scalar(0, 255, 255), 22, false);
