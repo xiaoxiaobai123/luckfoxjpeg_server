@@ -18,7 +18,7 @@ mark() { echo "[boot $(up)s] $1" >> $LOG; }
 watcher() {
     # wait for the stock app to appear (the slim image does not start it at all: do not wait long), then stop it cleanly
     n=0
-    while [ $n -lt 12 ]; do
+    while [ $n -lt 2 ]; do
         ps | grep -q "[r]kipc" && break
         sleep 1; n=$((n+1))
     done
