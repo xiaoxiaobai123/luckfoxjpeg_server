@@ -20,4 +20,5 @@ mkdir -p $O/etc/init.d $O/opt/circle
 install -m755 $HERE/S21zcircle $O/etc/init.d/S21zcircle
 install -m755 $HERE/spi0_on.sh $HERE/i2c3_on.sh $O/opt/circle/
 install -m644 $HERE/profile $O/opt/circle/profile
+install -m644 $HERE/spi0.dtbo $O/opt/circle/spi0.dtbo
 install -m755 "$APP" $O/opt/circle/circle_detect

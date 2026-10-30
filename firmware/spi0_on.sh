@@ -11,6 +11,8 @@ CLK=$(ph $D/spi0m0-clk); MOSI=$(ph $D/spi0m0-mosi); CS=$(ph $D/spi0m0-cs0)
 KEY="$CLK $MOSI $CS"
 if [ -f $CACHE/spi0.dtbo ] && [ "$(cat $CACHE/spi0.key 2>/dev/null)" = "$KEY" ]; then
     DTBO=$CACHE/spi0.dtbo
+elif [ "$KEY" = "72 74 75" ] && [ -f /opt/circle/spi0.dtbo ]; then
+    DTBO=/opt/circle/spi0.dtbo   # precompiled (the slim image has no dtc)
 else
     cat > /tmp/spi0.dts <<DTS
 /dts-v1/;
