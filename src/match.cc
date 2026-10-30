@@ -29,11 +29,16 @@ cv::Mat rotated(const cv::Mat& src, double angle, bool isMask) {
 }
 
 // best correlation (-1..1) of the masked template anywhere in 'search'; loc = top-left of the best place
-double matchOnce(const cv::Mat& search, const cv::Mat& tpl, const cv::Mat& mask, cv::Point& loc) {
+double matchOnce(const cv::Mat& search, const cv::Mat& tpl, const cv::Mat& mask, bool useMask, cv::Point& loc) {
     cv::Mat res;
-    try {
-        cv::matchTemplate(search, tpl, res, cv::TM_CCOEFF_NORMED, mask);
-    } catch (const cv::Exception&) {  // an OpenCV build without masked matching: use the whole rectangle
+    if (useMask) {
+        try {
+            cv::matchTemplate(search, tpl, res, cv::TM_CCOEFF_NORMED, mask);
+            res.setTo(-1.0, res > 1.001);  // the masked version returns garbage (>1) on flat, saturated areas
+        } catch (const cv::Exception&) {  // an OpenCV build without masked matching: use the whole rectangle
+            cv::matchTemplate(search, tpl, res, cv::TM_CCOEFF_NORMED);
+        }
+    } else {
         cv::matchTemplate(search, tpl, res, cv::TM_CCOEFF_NORMED);
     }
     cv::patchNaNs(res, -1.0);  // a flat patch has no correlation
@@ -76,6 +81,7 @@ MatchResult tplMatch(const cv::Mat& gray, const Settings& s, const Template& t) 
     if (t.img.cols > roi.width || t.img.rows > roi.height) return r;  // does not fit
     cv::Mat search = gray(roi);
     cv::Mat mask = shapeMask(t.img.cols, t.img.rows, s.tplShape);
+    const bool circ = s.tplShape == 1;  // a rectangle needs no mask (faster, and no garbage values)
     const int A = s.tplAngle;  // search -A..+A degrees
 
     // 1. coarse: half size, every whole degree
@@ -90,7 +96,7 @@ MatchResult tplMatch(const cv::Mat& gray, const Settings& s, const Template& t) 
     cv::Point bestLoc;
     for (int a = -A; a <= A; ++a) {
         cv::Point loc;
-        double v = matchOnce(sc, rotated(tc, a, false), rotated(mc, a, true), loc);
+        double v = matchOnce(sc, rotated(tc, a, false), rotated(mc, a, true), circ, loc);
         if (v > best) { best = v; bestAngle = a; bestLoc = loc; }
     }
 
@@ -106,7 +112,7 @@ MatchResult tplMatch(const cv::Mat& gray, const Settings& s, const Template& t) 
         for (int i = 0; i < (A == 0 ? 1 : 3); ++i) {
             double a = bestAngle + steps[i];
             cv::Point loc;
-            double v = matchOnce(ws, rotated(t.img, a, false), rotated(mask, a, true), loc);
+            double v = matchOnce(ws, rotated(t.img, a, false), rotated(mask, a, true), circ, loc);
             if (v > fineBest) { fineBest = v; fineAngle = a; fineLoc = cv::Point(loc.x + wx, loc.y + wy); }
         }
         best = fineBest; bestAngle = fineAngle; bestLoc = fineLoc;
