@@ -728,6 +728,7 @@ int main(int argc, char** argv) {
     bool touchOk = !g_p.touchDev.empty() && touchStart(g_p.touchDev.c_str(), g_p.touchRst);
     printf("touch: %s\n", g_p.touchDev.empty() ? "off" : (touchOk ? "ready" : "not answering"));
 
+    webSetControl(&g_shared, g_p.conf, g_p.conf + ".tpl.png");
     if (g_p.webPort > 0) webStart(g_p.webPort);
 
     if (!sensorPresent()) {

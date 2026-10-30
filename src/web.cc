@@ -1,11 +1,14 @@
 #include "web.h"
 #include "keys.h"
+#include "settings.h"
 #include "touch.h"
+#include "webpage.h"
 
 #include <netinet/in.h>
 #include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -29,20 +32,9 @@ volatile bool g_run = false;
 int g_listen = -1;
 pthread_t g_serverThread;
 
-const char* kPage =
-    "<!doctype html><meta charset=utf-8><title>Circle checker</title>"
-    "<style>body{font-family:sans-serif;background:#111;color:#ddd;margin:12px}"
-    "img{background:#000;vertical-align:top}button{font-size:18px;margin:3px;padding:8px 14px}</style>"
-    "<h3>Circle checker bench view</h3>"
-    "<div><img src=/cam width=480> <img id=ui src=/ui width=240 style=\"cursor:pointer\"></div>"
-    "<p>Screen keys: "
-    "<button onclick=\"k('ok')\">OK / menu</button><button onclick=\"k('up')\">UP</button>"
-    "<button onclick=\"k('down')\">DOWN</button><button onclick=\"k('left')\">LEFT</button>"
-    "<button onclick=\"k('right')\">RIGHT</button><button onclick=\"k('adj')\">ADJ x10</button></p>"
-    "<p>Click the screen picture to tap it.</p>"
-    "<script>function k(n){fetch('/key?k='+n)}"
-    "document.getElementById('ui').onclick=function(e){var r=this.getBoundingClientRect();"
-    "fetch('/touch?x='+Math.round((e.clientX-r.left)*240/r.width)+'&y='+Math.round((e.clientY-r.top)*284/r.height))}</script>";
+SharedSettings* g_settings = NULL;  // set by webSetControl: the page can read and change the settings
+std::string g_confPath, g_tplPath;
+pthread_mutex_t g_setLock = PTHREAD_MUTEX_INITIALIZER;  // one change at a time (read - modify - write)
 
 void publish(Stream& s, const cv::Mat& bgr, int quality) {
     std::vector<unsigned char> jpg;
@@ -57,6 +49,10 @@ void publish(Stream& s, const cv::Mat& bgr, int quality) {
 }
 
 void sendAll(int fd, const std::string& s) { (void)send(fd, s.data(), s.size(), MSG_NOSIGNAL); }
+
+void sendText(int fd, const char* type, const std::string& body, const char* status = "200 OK") {
+    sendAll(fd, std::string("HTTP/1.0 ") + status + "\r\nCache-Control: no-cache\r\nContent-Type: " + type + "\r\n\r\n" + body);
+}
 
 void streamTo(int fd, Stream& s) {
     sendAll(fd, "HTTP/1.0 200 OK\r\nCache-Control: no-cache\r\n"
@@ -85,9 +81,51 @@ void streamTo(int fd, Stream& s) {
     __sync_fetch_and_sub(&s.clients, 1);
 }
 
+// the settings as JSON, plus whether a template has been learned
+std::string settingsJson() {
+    Settings s = g_settings->get();
+    std::string j = s.toJson();
+    j.erase(j.size() - 1);  // the closing brace
+    j += g_settings->haveTemplate() ? ",\"have_tpl\":1}" : ",\"have_tpl\":0}";
+    return j;
+}
+
+// "GET /set?mode=2&tpl_score=80 HTTP/1.1": apply every key=value, keep the values inside their limits
+void handleSet(int fd, const std::string& line) {
+    size_t b = line.find('?'), e = line.find(' ', b == std::string::npos ? 0 : b);
+    if (b == std::string::npos) { sendText(fd, "text/plain", "bad", "400 Bad Request"); return; }
+    std::string q = line.substr(b + 1, e == std::string::npos ? e : e - b - 1);
+    pthread_mutex_lock(&g_setLock);
+    Settings s = g_settings->get();
+    size_t i = 0;
+    while (i < q.size()) {
+        size_t amp = q.find('&', i);
+        std::string pair = q.substr(i, amp == std::string::npos ? amp : amp - i);
+        size_t eq = pair.find('=');
+        if (eq != std::string::npos) s.setKey(pair.substr(0, eq).c_str(), atoi(pair.c_str() + eq + 1));
+        if (amp == std::string::npos) break;
+        i = amp + 1;
+    }
+    s.clamp();
+    g_settings->set(s);
+    pthread_mutex_unlock(&g_setLock);
+    sendText(fd, "application/json", settingsJson());
+}
+
+void sendFile(int fd, const std::string& path, const char* type) {
+    FILE* f = fopen(path.c_str(), "rb");
+    if (!f) { sendText(fd, "text/plain", "no file", "404 Not Found"); return; }
+    std::string body;
+    char buf[4096];
+    size_t n;
+    while ((n = fread(buf, 1, sizeof(buf), f)) > 0) body.append(buf, n);
+    fclose(f);
+    sendText(fd, type, body);
+}
+
 void* clientThread(void* arg) {
     int fd = (int)(intptr_t)arg;
-    char req[512];
+    char req[2048];
     ssize_t n = recv(fd, req, sizeof(req) - 1, 0);
     if (n > 0) {
         req[n] = 0;
@@ -101,13 +139,27 @@ void* clientThread(void* arg) {
             int tx = 0, ty = 0;
             bool ok = sscanf(line.c_str(), "GET /touch?x=%d&y=%d", &tx, &ty) == 2;
             if (ok) touchPush(tx, ty, true, false);
-            sendAll(fd, std::string("HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\n\r\n") + (ok ? "ok" : "bad"));
+            sendText(fd, "text/plain", ok ? "ok" : "bad");
         } else if (line.compare(0, 11, "GET /key?k=") == 0) {
             size_t b = 11, e = line.find(' ', b);
             bool ok = keysPushByName(line.substr(b, e == std::string::npos ? e : e - b));
-            sendAll(fd, std::string("HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\n\r\n") + (ok ? "ok" : "unknown key"));
+            sendText(fd, "text/plain", ok ? "ok" : "unknown key");
+        } else if (g_settings && line.compare(0, 14, "GET /settings ") == 0) {
+            sendText(fd, "application/json", settingsJson());
+        } else if (g_settings && line.compare(0, 9, "GET /set?") == 0) {
+            handleSet(fd, line);
+        } else if (g_settings && line.compare(0, 11, "GET /learn ") == 0) {
+            g_settings->requestLearn();
+            sendText(fd, "text/plain", "ok");
+        } else if (g_settings && line.compare(0, 10, "GET /save ") == 0) {
+            pthread_mutex_lock(&g_setLock);
+            bool ok = g_settings->get().save(g_confPath.c_str());
+            pthread_mutex_unlock(&g_setLock);
+            sendText(fd, "text/plain", ok ? "ok" : "failed");
+        } else if (g_settings && line.compare(0, 13, "GET /tpl.png?") == 0) {
+            sendFile(fd, g_tplPath, "image/png");
         } else {
-            sendAll(fd, std::string("HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n\r\n") + kPage);
+            sendText(fd, "text/html; charset=utf-8", kPage);
         }
     }
     close(fd);
@@ -126,6 +178,12 @@ void* serverThread(void*) {
 }
 
 }  // namespace
+
+void webSetControl(SharedSettings* settings, const std::string& confPath, const std::string& tplPath) {
+    g_settings = settings;
+    g_confPath = confPath;
+    g_tplPath = tplPath;
+}
 
 void webStart(int port) {
     g_listen = socket(AF_INET, SOCK_STREAM, 0);

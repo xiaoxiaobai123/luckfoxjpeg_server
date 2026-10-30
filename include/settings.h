@@ -2,6 +2,7 @@
 #define SETTINGS_H
 
 #include <pthread.h>
+#include <string>
 
 // User-adjustable detection settings, edited from the on-screen menu and stored in a small text file.
 struct Settings {
@@ -26,6 +27,8 @@ struct Settings {
     int tplX = 280, tplY = 200, tplW = 64, tplH = 64;  // where the template is cut out of the picture when learned
 
     void clamp();
+    bool setKey(const char* key, int v);  // by the name used in the settings file; false for an unknown name
+    std::string toJson() const;           // {"mode":1,...} with the names of the settings file
     bool load(const char* path);        // false if the file is missing or unreadable
     bool save(const char* path) const;  // writes a temp file, then renames it
 };

@@ -33,6 +33,33 @@ void Settings::clamp() {
     tplY = clampInt(tplY, 0, 480 - tplH);
 }
 
+bool Settings::setKey(const char* key, int v) {
+    if (!strcmp(key, "target")) { target = v; return true; }
+    if (!strcmp(key, "min_dia")) { minDia = v; return true; }
+    if (!strcmp(key, "max_dia")) { maxDia = v; return true; }
+    if (!strcmp(key, "roundness")) { roundness = v; return true; }
+    if (!strcmp(key, "edge")) { edge = v; return true; }
+    if (!strcmp(key, "exposure")) { exposure = v; return true; }
+    if (!strcmp(key, "gain")) { gain = v; return true; }
+    if (!strcmp(key, "mode")) { mode = v; return true; }
+    if (!strcmp(key, "contrast")) { contrast = v; return true; }
+    if (!strcmp(key, "lang")) { lang = v; return true; }
+    if (!strcmp(key, "shape")) { shape = v; return true; }
+    if (!strcmp(key, "roi_x")) { roiX = v; return true; }
+    if (!strcmp(key, "roi_y")) { roiY = v; return true; }
+    if (!strcmp(key, "roi_w")) { roiW = v; return true; }
+    if (!strcmp(key, "roi_h")) { roiH = v; return true; }
+    if (!strcmp(key, "tpl_score")) { tplScore = v; return true; }
+    if (!strcmp(key, "tpl_angle")) { tplAngle = v; return true; }
+    if (!strcmp(key, "tpl_count")) { tplCount = v; return true; }
+    if (!strcmp(key, "tpl_shape")) { tplShape = v; return true; }
+    if (!strcmp(key, "tpl_x")) { tplX = v; return true; }
+    if (!strcmp(key, "tpl_y")) { tplY = v; return true; }
+    if (!strcmp(key, "tpl_w")) { tplW = v; return true; }
+    if (!strcmp(key, "tpl_h")) { tplH = v; return true; }
+    return false;
+}
+
 bool Settings::load(const char* path) {
     FILE* f = fopen(path, "r");
     if (!f) return false;
@@ -41,33 +68,23 @@ bool Settings::load(const char* path) {
         char key[48];
         int v = 0;
         if (sscanf(line, "%47[^=]=%d", key, &v) != 2) continue;
-        if (!strcmp(key, "target")) target = v;
-        else if (!strcmp(key, "min_dia")) minDia = v;
-        else if (!strcmp(key, "max_dia")) maxDia = v;
-        else if (!strcmp(key, "roundness")) roundness = v;
-        else if (!strcmp(key, "edge")) edge = v;
-        else if (!strcmp(key, "exposure")) exposure = v;
-        else if (!strcmp(key, "gain")) gain = v;
-        else if (!strcmp(key, "mode")) mode = v;
-        else if (!strcmp(key, "contrast")) contrast = v;
-        else if (!strcmp(key, "lang")) lang = v;
-        else if (!strcmp(key, "shape")) shape = v;
-        else if (!strcmp(key, "roi_x")) roiX = v;
-        else if (!strcmp(key, "roi_y")) roiY = v;
-        else if (!strcmp(key, "roi_w")) roiW = v;
-        else if (!strcmp(key, "roi_h")) roiH = v;
-        else if (!strcmp(key, "tpl_score")) tplScore = v;
-        else if (!strcmp(key, "tpl_angle")) tplAngle = v;
-        else if (!strcmp(key, "tpl_count")) tplCount = v;
-        else if (!strcmp(key, "tpl_shape")) tplShape = v;
-        else if (!strcmp(key, "tpl_x")) tplX = v;
-        else if (!strcmp(key, "tpl_y")) tplY = v;
-        else if (!strcmp(key, "tpl_w")) tplW = v;
-        else if (!strcmp(key, "tpl_h")) tplH = v;
+        setKey(key, v);
     }
     fclose(f);
     clamp();
     return true;
+}
+
+std::string Settings::toJson() const {
+    char b[640];
+    snprintf(b, sizeof(b),
+             "{\"mode\":%d,\"target\":%d,\"min_dia\":%d,\"max_dia\":%d,\"roundness\":%d,\"edge\":%d,\"contrast\":%d,"
+             "\"shape\":%d,\"exposure\":%d,\"gain\":%d,\"roi_x\":%d,\"roi_y\":%d,\"roi_w\":%d,\"roi_h\":%d,\"lang\":%d,"
+             "\"tpl_score\":%d,\"tpl_count\":%d,\"tpl_angle\":%d,\"tpl_shape\":%d,\"tpl_x\":%d,\"tpl_y\":%d,"
+             "\"tpl_w\":%d,\"tpl_h\":%d}",
+             mode, target, minDia, maxDia, roundness, edge, contrast, shape, exposure, gain, roiX, roiY, roiW, roiH, lang,
+             tplScore, tplCount, tplAngle, tplShape, tplX, tplY, tplW, tplH);
+    return b;
 }
 
 bool Settings::save(const char* path) const {
